@@ -76,17 +76,39 @@ _SHARED_CSS = """
   a { color: var(--link); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
-  header { padding: 16px 28px; border-bottom: 1px solid var(--border);
+  header { padding: 8px 16px; border-bottom: 1px solid var(--border);
     background: var(--panel); position: sticky; top: 0; z-index: 5;
-    display: flex; align-items: center; gap: 16px; }
-  header h1 { margin: 0; font-size: 17px; font-weight: 600;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+    min-height: 40px; backdrop-filter: blur(8px); }
 
-  .theme-switch { display: inline-flex; align-items: center; gap: 8px;
-    color: var(--muted); font-size: 13px; }
-  .theme-switch select { background: var(--bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
-    font: inherit; font-size: 13px; cursor: pointer; }
+  .theme-switch { display: inline-flex; align-items: center; gap: 6px; }
+  .theme-swatch { width: 22px; height: 22px; border-radius: 50%;
+    border: 2px solid transparent; cursor: pointer; padding: 0;
+    position: relative; outline: none; flex: 0 0 22px;
+    transition: transform .12s ease, border-color .12s ease,
+                box-shadow .12s ease; }
+  .theme-swatch:hover { transform: scale(1.15); }
+  .theme-swatch:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .theme-swatch.active { border-color: var(--text);
+    box-shadow: 0 0 0 1px var(--panel) inset; }
+  .theme-swatch::after { content: ""; position: absolute;
+    right: -2px; bottom: -2px; width: 8px; height: 8px; border-radius: 50%;
+    border: 1.5px solid var(--panel); }
+  .theme-swatch[data-theme="auto"]      { background:
+      linear-gradient(135deg, #f7f8fa 0 50%, #0f1115 50% 100%); }
+  .theme-swatch[data-theme="auto"]::after      { background: #ff5252; }
+  .theme-swatch[data-theme="dark"]      { background: #0f1115; }
+  .theme-swatch[data-theme="dark"]::after      { background: #ff5252; }
+  .theme-swatch[data-theme="light"]     { background: #f7f8fa; }
+  .theme-swatch[data-theme="light"]::after     { background: #d22d2d; }
+  .theme-swatch[data-theme="sepia"]     { background: #f5ecd9; }
+  .theme-swatch[data-theme="sepia"]::after     { background: #b35a1f; }
+  .theme-swatch[data-theme="midnight"]  { background: #0a1024; }
+  .theme-swatch[data-theme="midnight"]::after  { background: #4cc9ff; }
+  .theme-swatch[data-theme="solarized"] { background: #002b36; }
+  .theme-swatch[data-theme="solarized"]::after { background: #b58900; }
+  .theme-swatch[data-theme="forest"]    { background: #102018; }
+  .theme-swatch[data-theme="forest"]::after    { background: #f5b14b; }
 
   .url-bar { max-width: 1100px; margin: 0 auto;
     padding: 18px 32px 0; }
@@ -226,19 +248,15 @@ _TEMPLATE = """<!doctype html>
 </head>
 <body>
 <header>
-  <h1>{title}</h1>
-  <label class="theme-switch">
-    Theme
-    <select id="theme-select" aria-label="Theme">
-      <option value="auto">Auto</option>
-      <option value="dark">Dark</option>
-      <option value="light">Light</option>
-      <option value="sepia">Sepia</option>
-      <option value="midnight">Midnight</option>
-      <option value="solarized">Solarized</option>
-      <option value="forest">Forest</option>
-    </select>
-  </label>
+  <div class="theme-switch" role="radiogroup" aria-label="Theme">
+    <button type="button" class="theme-swatch" data-theme="auto"      title="Auto"      aria-label="Auto theme"></button>
+    <button type="button" class="theme-swatch" data-theme="dark"      title="Dark"      aria-label="Dark theme"></button>
+    <button type="button" class="theme-swatch" data-theme="light"     title="Light"     aria-label="Light theme"></button>
+    <button type="button" class="theme-swatch" data-theme="sepia"     title="Sepia"     aria-label="Sepia theme"></button>
+    <button type="button" class="theme-swatch" data-theme="midnight"  title="Midnight"  aria-label="Midnight theme"></button>
+    <button type="button" class="theme-swatch" data-theme="solarized" title="Solarized" aria-label="Solarized theme"></button>
+    <button type="button" class="theme-swatch" data-theme="forest"    title="Forest"    aria-label="Forest theme"></button>
+  </div>
 </header>
 
 <section class="url-bar">
@@ -322,13 +340,17 @@ _TEMPLATE = """<!doctype html>
   const FULL_TEXT = {full_text_json};
 
   const THEME_KEY = 'yt-trans-theme';
-  const themeSelect = document.getElementById('theme-select');
   const savedTheme = localStorage.getItem(THEME_KEY) || 'auto';
   document.documentElement.setAttribute('data-theme', savedTheme);
-  themeSelect.value = savedTheme;
-  themeSelect.addEventListener('change', () => {{
-    document.documentElement.setAttribute('data-theme', themeSelect.value);
-    localStorage.setItem(THEME_KEY, themeSelect.value);
+  const swatches = document.querySelectorAll('.theme-swatch');
+  swatches.forEach(btn => {{
+    if (btn.dataset.theme === savedTheme) btn.classList.add('active');
+    btn.addEventListener('click', () => {{
+      const t = btn.dataset.theme;
+      document.documentElement.setAttribute('data-theme', t);
+      localStorage.setItem(THEME_KEY, t);
+      swatches.forEach(b => b.classList.toggle('active', b === btn));
+    }});
   }});
 
   let player = null;
@@ -484,19 +506,15 @@ _LANDING_TEMPLATE = """<!doctype html>
 </head>
 <body>
 <header>
-  <h1>YT Transcriptor</h1>
-  <label class="theme-switch">
-    Theme
-    <select id="theme-select" aria-label="Theme">
-      <option value="auto">Auto</option>
-      <option value="dark">Dark</option>
-      <option value="light">Light</option>
-      <option value="sepia">Sepia</option>
-      <option value="midnight">Midnight</option>
-      <option value="solarized">Solarized</option>
-      <option value="forest">Forest</option>
-    </select>
-  </label>
+  <div class="theme-switch" role="radiogroup" aria-label="Theme">
+    <button type="button" class="theme-swatch" data-theme="auto"      title="Auto"      aria-label="Auto theme"></button>
+    <button type="button" class="theme-swatch" data-theme="dark"      title="Dark"      aria-label="Dark theme"></button>
+    <button type="button" class="theme-swatch" data-theme="light"     title="Light"     aria-label="Light theme"></button>
+    <button type="button" class="theme-swatch" data-theme="sepia"     title="Sepia"     aria-label="Sepia theme"></button>
+    <button type="button" class="theme-swatch" data-theme="midnight"  title="Midnight"  aria-label="Midnight theme"></button>
+    <button type="button" class="theme-swatch" data-theme="solarized" title="Solarized" aria-label="Solarized theme"></button>
+    <button type="button" class="theme-swatch" data-theme="forest"    title="Forest"    aria-label="Forest theme"></button>
+  </div>
 </header>
 
 <section class="landing">
@@ -530,13 +548,17 @@ _LANDING_TEMPLATE = """<!doctype html>
 
 <script>
   const THEME_KEY = 'yt-trans-theme';
-  const themeSelect = document.getElementById('theme-select');
   const savedTheme = localStorage.getItem(THEME_KEY) || 'auto';
   document.documentElement.setAttribute('data-theme', savedTheme);
-  themeSelect.value = savedTheme;
-  themeSelect.addEventListener('change', () => {{
-    document.documentElement.setAttribute('data-theme', themeSelect.value);
-    localStorage.setItem(THEME_KEY, themeSelect.value);
+  const swatches = document.querySelectorAll('.theme-swatch');
+  swatches.forEach(btn => {{
+    if (btn.dataset.theme === savedTheme) btn.classList.add('active');
+    btn.addEventListener('click', () => {{
+      const t = btn.dataset.theme;
+      document.documentElement.setAttribute('data-theme', t);
+      localStorage.setItem(THEME_KEY, t);
+      swatches.forEach(b => b.classList.toggle('active', b === btn));
+    }});
   }});
   document.getElementById('url-form').addEventListener('submit', () => {{
     const btn = document.getElementById('submit-btn');
