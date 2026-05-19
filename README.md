@@ -20,6 +20,7 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
 - [CLI reference](#cli-reference)
 - [Output formats](#output-formats)
 - [The interactive HTML viewer](#the-interactive-html-viewer)
+- [AI Refine](#ai-refine)
 - [Python API](#python-api)
 - [Project layout](#project-layout)
 - [Troubleshooting](#troubleshooting)
@@ -48,6 +49,12 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
   place, a docking floating mini-player, copy/download buttons, and a
   7-way theme switcher (Auto / Dark / Light / Sepia / Midnight /
   Solarized / Forest) saved to localStorage.
+- **AI Refine button** — auto-generated captions are noisy (missing
+  punctuation, run-on sentences, occasional word-recognition errors).
+  One click sends the transcript through a free LLM that adds
+  punctuation, fixes obvious mistakes, and breaks the wall-of-text into
+  proper paragraphs. Toggle between *Original* and *AI Refined* views.
+  Supports Ollama (local, $0), Groq, Google Gemini, and OpenRouter.
 - **Friendly error messages** for `TranscriptsDisabled`,
   `VideoUnavailable`, `IpBlocked`, `NoTranscriptFound`, etc.
 - **Both a Python API and a CLI** — embed it in your scripts or use it
@@ -208,6 +215,95 @@ YouTube player itself needs the network.
 
 ---
 
+## AI Refine
+
+YouTube's auto-generated captions are noisy — missing punctuation,
+run-on sentences, lowercase everywhere, occasional word-recognition
+errors. The viewer has a **Refine with AI** button (next to *Copy* and
+*Download*) that sends the transcript through a free LLM and shows you
+a cleaned-up version. Switching back is one click on the
+*Original ⇄ AI Refined* toggle.
+
+**Available only when running via `python cli.py --serve`** (the
+button is disabled on offline `file://` pages because there's no server
+to call).
+
+### Supported providers (all free)
+
+The first one that's configured wins, in this priority order:
+
+| # | provider     | setup                                                                                                                            | model default                          |
+|---|--------------|----------------------------------------------------------------------------------------------------------------------------------|----------------------------------------|
+| 1 | **Ollama**   | `curl -fsSL https://ollama.com/install.sh \| sh` then `ollama pull llama3.2`                                                     | first installed chat model (auto-pick) |
+| 2 | **Groq**     | grab a key at <https://console.groq.com/keys>, then `export GROQ_API_KEY=...`                                                    | `llama-3.3-70b-versatile`              |
+| 3 | **Gemini**   | grab a key at <https://aistudio.google.com/app/apikey>, then `export GOOGLE_API_KEY=...`                                         | `gemini-2.0-flash-exp`                 |
+| 4 | **OpenRouter** | grab a key at <https://openrouter.ai/keys>, then `export OPENROUTER_API_KEY=...`                                              | `meta-llama/llama-3.2-3b-instruct:free` |
+
+Force a specific provider with `YT_TRANS_AI_PROVIDER=ollama|groq|gemini|openrouter`.
+Force a specific model with `YT_TRANS_OLLAMA_MODEL` /
+`YT_TRANS_GROQ_MODEL` / `YT_TRANS_GEMINI_MODEL` /
+`YT_TRANS_OPENROUTER_MODEL`.
+
+Recommended: **Ollama** if you don't mind a one-time ~2 GB model
+download (full privacy, no rate limits, completely offline once
+installed). **Groq** if you want zero local setup and the fastest
+response.
+
+### What it does (and doesn't)
+
+The prompt asks the model to:
+
+- add proper punctuation and capitalization
+- fix obvious word-recognition errors using context
+- break the text into readable paragraphs
+- **preserve the speaker's original words, meaning, and language**
+- *not* summarise, translate, or add commentary
+
+Long transcripts are split into ~1200-word chunks so they fit in the
+context window — chunks are processed sequentially, server-side, and
+stitched back together.
+
+### Programmatic use
+
+```python
+from ai_refine import refine
+
+result = refine(
+    "raw transcript text...",
+    language="en",
+    max_chunk_words=1200,
+)
+print(result["refined"])          # cleaned text
+print(result["provider"])         # e.g. "ollama"
+print(result["model"])            # e.g. "llama3.2:latest"
+print(result["chunks"])           # number of pieces sent to the LLM
+```
+
+### HTTP API
+
+```http
+POST /api/refine
+Content-Type: application/json
+
+{"text": "raw transcript here...", "language": "en"}
+```
+
+Returns:
+
+```json
+{
+  "refined":  "...",
+  "provider": "ollama",
+  "model":    "llama3.2:latest",
+  "chunks":   3
+}
+```
+
+Errors come back as `{"error": "..."}` with status `400` (bad request),
+`503` (no provider configured / provider failed), or `500` (unexpected).
+
+---
+
 ## Python API
 
 ```python
@@ -255,7 +351,8 @@ serve(host="0.0.0.0", port=8000, languages=["en", "hi"], open_browser=True)
 Yt-trans/
 ├── transcriptor.py   # Transcriptor class + TranscriptionResult
 ├── html_view.py      # render TranscriptionResult -> standalone HTML page
-├── server.py         # tiny stdlib HTTP server backing the --serve web UI
+├── server.py         # tiny stdlib HTTP server (--serve web UI + /api/refine)
+├── ai_refine.py      # LLM-backed transcript cleaner (Ollama/Groq/Gemini/OpenRouter)
 ├── utils.py          # URL/id parsing, text cleanup, timestamp formatting
 ├── cli.py            # argparse CLI entry-point (--serve, --open, --format, ...)
 ├── trans_api.py      # minimal usage example
@@ -296,6 +393,31 @@ Pick another port: `python cli.py --serve --port 8765`.
 Some very long videos take a while because YouTube returns a large
 transcript blob. Use `--quiet` to skip the metadata header and stream
 the body straight to a file: `python cli.py <id> -q -o out.txt`.
+
+**AI Refine returns *"No AI provider is configured"***
+Pick one (any is free):
+
+- **Easiest, fully local:** install Ollama
+  (`curl -fsSL https://ollama.com/install.sh | sh`), pull a model
+  (`ollama pull llama3.2`), make sure it's running (`ollama serve`),
+  then click *Refine with AI* again — the server auto-detects it.
+- **Easiest, no local install:** sign up for free at
+  [console.groq.com/keys](https://console.groq.com/keys), then run the
+  server with `GROQ_API_KEY=... python cli.py --serve`.
+- See [AI Refine](#ai-refine) for all four options.
+
+**AI Refine returns *"Ollama HTTP 404: model not found"***
+Your Ollama is running but doesn't have the model the picker chose.
+Either `ollama pull <name>` it, or set `YT_TRANS_OLLAMA_MODEL` to one
+you have (e.g. `export YT_TRANS_OLLAMA_MODEL=mistral`). Run
+`curl -s http://localhost:11434/api/tags` to list what's installed.
+
+**AI Refine takes forever on long videos**
+LLM inference is sequential per chunk. A 30-minute video chunked into
+~5 pieces typically takes 30–60 s on Groq/Gemini and 1–3 min on a
+local 3B Ollama model. Use a smaller/faster model
+(`YT_TRANS_OLLAMA_MODEL=llama3.2:3b`) or one of the cloud providers
+for speed.
 
 **Generic warning: undocumented YouTube endpoint**
 `youtube-transcript-api` calls an undocumented part of the YouTube web

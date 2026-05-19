@@ -11,6 +11,7 @@ No external dependencies — just `http.server` from the standard library.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import webbrowser
@@ -18,10 +19,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Sequence
 from urllib.parse import parse_qs, urlparse
 
+from ai_refine import RefinementError, refine
 from html_view import render, render_landing
 from transcriptor import DEFAULT_LANGUAGES, TranscriptionError, Transcriptor
 
 log = logging.getLogger("yt-trans.server")
+
+_MAX_REFINE_BODY = 5 * 1024 * 1024  # 5 MB cap on POST body to /api/refine
 
 
 def _build_handler(default_langs: Sequence[str]):
@@ -41,6 +45,61 @@ def _build_handler(default_langs: Sequence[str]):
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(data)
+
+        def _send_json(self, payload: dict, status: int = 200) -> None:
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            if parsed.path != "/api/refine":
+                self.send_error(404, "Not found")
+                return
+
+            try:
+                length = int(self.headers.get("Content-Length") or "0")
+            except ValueError:
+                length = 0
+            if length <= 0 or length > _MAX_REFINE_BODY:
+                self._send_json(
+                    {"error": f"body must be 1..{_MAX_REFINE_BODY} bytes"},
+                    status=400,
+                )
+                return
+
+            try:
+                raw = self.rfile.read(length)
+                payload = json.loads(raw.decode("utf-8"))
+            except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+                self._send_json(
+                    {"error": f"invalid JSON: {exc}"}, status=400
+                )
+                return
+
+            text = (payload.get("text") or "").strip()
+            language = (payload.get("language") or "en").strip() or "en"
+            if not text:
+                self._send_json({"error": "field 'text' is required"}, status=400)
+                return
+
+            try:
+                result = refine(text, language=language)
+            except RefinementError as exc:
+                self._send_json({"error": str(exc)}, status=503)
+                return
+            except Exception as exc:  # noqa: BLE001
+                log.exception("AI refine crashed")
+                self._send_json(
+                    {"error": f"unexpected: {exc}"}, status=500
+                )
+                return
+
+            self._send_json(result)
 
         def do_GET(self) -> None:  # noqa: N802
             parsed = urlparse(self.path)

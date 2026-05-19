@@ -216,12 +216,31 @@ _SHARED_CSS = """
     font: inherit; font-size: 14px; line-height: 1; }
   .dock-bar button:hover { background: var(--hover); color: var(--text); }
 
-  .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap;
+    align-items: center; }
   .actions a, .actions button { background: var(--panel); border: 1px solid var(--border);
     color: var(--text); padding: 8px 14px; border-radius: 6px; font: inherit;
     font-size: 13px; cursor: pointer; text-decoration: none;
     transition: background .12s ease; }
   .actions a:hover, .actions button:hover { background: var(--hover); }
+  .actions button.primary { background: var(--accent); color: white;
+    border-color: var(--accent); font-weight: 600; }
+  .actions button.primary:hover { opacity: .9; background: var(--accent); }
+  .actions button:disabled { opacity: .6; cursor: wait; }
+  .actions .ai-meta { font-size: 12px; color: var(--muted); margin-left: 4px; }
+  .actions .ai-toggle { display: inline-flex; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 999px; padding: 3px; }
+  .actions .ai-toggle button { background: transparent; border: 0;
+    color: var(--muted); padding: 5px 12px; border-radius: 999px;
+    font-size: 12px; font-weight: 500; }
+  .actions .ai-toggle button.active { background: var(--accent); color: white; }
+  .ai-error { margin-top: 12px; padding: 12px 14px; border-radius: 8px;
+    border: 1px solid var(--accent); background: var(--panel);
+    color: var(--text); font-size: 13px; white-space: pre-wrap;
+    font-family: ui-monospace, Menlo, monospace; line-height: 1.5; }
+  .ai-error strong { color: var(--accent); font-family: inherit; }
+  .ai-error code { background: var(--hover); padding: 1px 6px;
+    border-radius: 4px; font-size: 12px; }
 
   footer { max-width: 1500px; margin: 0 auto; padding: 24px 28px 40px;
     border-top: 1px solid var(--border); color: var(--muted); font-size: 13px;
@@ -290,11 +309,20 @@ _TEMPLATE = """<!doctype html>
       {timestamped_html}
     </div>
 
-    <div class="actions" style="margin-top:24px">
+    <div class="actions" id="actions-bar" style="margin-top:24px">
       <a href="{url}" target="_blank" rel="noopener">Open on YouTube ↗</a>
       <button id="copy-btn">Copy full text</button>
       <a id="download-btn" download="{download_name}">Download .txt</a>
+      <button id="ai-btn" class="primary" title="Clean up auto-generated text with AI">
+        Refine with AI
+      </button>
+      <div class="ai-toggle" id="ai-toggle" style="display:none">
+        <button class="active" data-view="original">Original</button>
+        <button data-view="refined">AI Refined</button>
+      </div>
+      <span class="ai-meta" id="ai-meta" style="display:none"></span>
     </div>
+    <div class="ai-error" id="ai-error" style="display:none"></div>
   </section>
 </main>
 
@@ -490,6 +518,86 @@ _TEMPLATE = """<!doctype html>
     const btn = document.getElementById('submit-btn');
     btn.textContent = 'Fetching…'; btn.disabled = true;
   }});
+
+  // ----- AI refine ---------------------------------------------------------
+  const LANG = {language_code_json};
+  const aiBtn      = document.getElementById('ai-btn');
+  const aiToggle   = document.getElementById('ai-toggle');
+  const aiMeta     = document.getElementById('ai-meta');
+  const aiError    = document.getElementById('ai-error');
+  const paraView   = document.getElementById('paragraph-view');
+  const originalHTML = paraView.innerHTML;
+  let refinedHTML = null;
+  let refinedText = null;
+
+  if (window.location.protocol === 'file:') {{
+    aiBtn.disabled = true;
+    aiBtn.title = 'AI refine only works when served. Run: python cli.py --serve';
+    aiBtn.textContent = 'Refine with AI (server only)';
+  }}
+
+  function escapeHTML(s) {{
+    return s.replace(/[&<>"']/g, c => ({{
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }}[c]));
+  }}
+
+  function renderParagraphs(text) {{
+    return text.split(/\\n{{2,}}/).map(p => p.trim()).filter(Boolean)
+      .map(p => '<p>' + escapeHTML(p) + '</p>').join('\\n');
+  }}
+
+  function showAIError(msg) {{
+    const hint = msg.includes('No AI provider')
+      ? msg
+      : '<strong>AI refine failed:</strong> ' + escapeHTML(msg);
+    aiError.innerHTML = hint.includes('No AI provider')
+      ? '<strong>No AI provider configured.</strong>\\n\\n' + escapeHTML(msg.replace(/^[^\\n]*\\n?/, ''))
+      : hint;
+    aiError.style.display = 'block';
+  }}
+
+  aiBtn.addEventListener('click', async () => {{
+    aiError.style.display = 'none';
+    aiBtn.disabled = true;
+    const orig = aiBtn.textContent;
+    aiBtn.textContent = 'Refining… (this can take a minute)';
+    try {{
+      const resp = await fetch('/api/refine', {{
+        method: 'POST',
+        headers: {{ 'Content-Type': 'application/json' }},
+        body: JSON.stringify({{ text: FULL_TEXT, language: LANG }})
+      }});
+      const data = await resp.json().catch(() => ({{ error: 'invalid server response' }}));
+      if (!resp.ok || data.error) throw new Error(data.error || ('HTTP ' + resp.status));
+
+      refinedText = data.refined || '';
+      refinedHTML = renderParagraphs(refinedText);
+      paraView.innerHTML = refinedHTML;
+
+      aiBtn.style.display = 'none';
+      aiToggle.style.display = 'inline-flex';
+      aiToggle.querySelectorAll('button').forEach(b =>
+        b.classList.toggle('active', b.dataset.view === 'refined')
+      );
+      aiMeta.textContent = 'via ' + data.provider + (data.model ? ' (' + data.model + ')' : '');
+      aiMeta.style.display = 'inline';
+    }} catch (e) {{
+      showAIError(e.message || String(e));
+      aiBtn.textContent = orig;
+      aiBtn.disabled = false;
+    }}
+  }});
+
+  aiToggle.querySelectorAll('button').forEach(btn => {{
+    btn.addEventListener('click', () => {{
+      if (btn.classList.contains('active')) return;
+      aiToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      paraView.innerHTML = btn.dataset.view === 'refined' ? refinedHTML : originalHTML;
+      document.querySelector('.tabs button[data-target="paragraph-view"]').click();
+    }});
+  }});
 </script>
 </body>
 </html>
@@ -614,6 +722,7 @@ def render(
         video_id_json=json.dumps(result.video_id),
         language=html.escape(result.language),
         language_code=html.escape(result.language_code),
+        language_code_json=json.dumps(result.language_code or "en"),
         kind=kind,
         snippet_count=result.snippet_count,
         duration_human=duration_human,
