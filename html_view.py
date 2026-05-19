@@ -28,161 +28,201 @@ if TYPE_CHECKING:
     from transcriptor import TranscriptionResult
 
 
+_SHARED_CSS = """
+  :root,
+  html[data-theme="dark"] {
+    --bg: #0f1115;     --panel: #161922;   --text: #e7e9ee;
+    --muted: #9aa3b2;  --accent: #ff5252;  --link: #7cb7ff;
+    --border: #262b36; --hover: #1f2330;
+  }
+  html[data-theme="light"] {
+    --bg: #f7f8fa;     --panel: #ffffff;   --text: #1b1f27;
+    --muted: #5b6675;  --accent: #d22d2d;  --link: #1559c2;
+    --border: #e3e7ee; --hover: #f0f3f8;
+  }
+  html[data-theme="sepia"] {
+    --bg: #f5ecd9;     --panel: #fbf5e6;   --text: #4b3a23;
+    --muted: #8a755a;  --accent: #b35a1f;  --link: #8a4a14;
+    --border: #e3d6b6; --hover: #efe3c6;
+  }
+  html[data-theme="midnight"] {
+    --bg: #0a1024;     --panel: #111a36;   --text: #d6e1ff;
+    --muted: #7a8bbf;  --accent: #4cc9ff;  --link: #82d3ff;
+    --border: #1c2750; --hover: #16224a;
+  }
+  html[data-theme="solarized"] {
+    --bg: #002b36;     --panel: #073642;   --text: #eee8d5;
+    --muted: #93a1a1;  --accent: #b58900;  --link: #2aa198;
+    --border: #0d4250; --hover: #0c3a47;
+  }
+  html[data-theme="forest"] {
+    --bg: #102018;     --panel: #163024;   --text: #e0efe2;
+    --muted: #8fb3a0;  --accent: #f5b14b;  --link: #7ddca4;
+    --border: #21402f; --hover: #1c3a2a;
+  }
+  @media (prefers-color-scheme: light) {
+    html[data-theme="auto"] {
+      --bg: #f7f8fa;     --panel: #ffffff;   --text: #1b1f27;
+      --muted: #5b6675;  --accent: #d22d2d;  --link: #1559c2;
+      --border: #e3e7ee; --hover: #f0f3f8;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, "Noto Sans", "Noto Sans Devanagari", sans-serif;
+    transition: background .2s ease, color .2s ease; }
+  a { color: var(--link); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  header { padding: 16px 28px; border-bottom: 1px solid var(--border);
+    background: var(--panel); position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: center; gap: 16px; }
+  header h1 { margin: 0; font-size: 17px; font-weight: 600;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+  .theme-switch { display: inline-flex; align-items: center; gap: 8px;
+    color: var(--muted); font-size: 13px; }
+  .theme-switch select { background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+    font: inherit; font-size: 13px; cursor: pointer; }
+
+  .url-bar { max-width: 1100px; margin: 0 auto;
+    padding: 18px 32px 0; }
+  .url-bar form { display: flex; gap: 8px; flex-wrap: wrap; }
+  .url-bar input, .url-bar button { font: inherit; font-size: 15px;
+    padding: 11px 16px; border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--text);
+    transition: border-color .15s ease, background .15s ease; }
+  .url-bar input:focus { outline: none; border-color: var(--accent); }
+  .url-bar input[name="url"] { flex: 1; min-width: 240px; }
+  .url-bar input[name="lang"] { width: 160px; flex: 0 0 auto; }
+  .url-bar button { background: var(--accent); color: white; border: 0;
+    cursor: pointer; font-weight: 600; padding: 11px 22px;
+    transition: opacity .15s ease; }
+  .url-bar button:hover { opacity: .9; }
+  .url-bar button:disabled { opacity: .6; cursor: wait; }
+  .url-bar .notice, .url-bar .error-msg {
+    margin-top: 10px; padding: 10px 14px; font-size: 13px;
+    border-radius: 8px; border: 1px solid var(--border);
+    background: var(--panel); color: var(--muted); }
+  .url-bar .error-msg { color: var(--accent); border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel)); }
+  .url-bar code { font-family: ui-monospace, Menlo, monospace;
+    background: var(--hover); padding: 1px 6px; border-radius: 4px;
+    font-size: 12px; color: var(--text); }
+
+  main { max-width: 1100px; margin: 0 auto;
+    padding: 28px 32px 32px; }
+
+  /* Landing-page hero (when the server has no URL yet) */
+  .landing { max-width: 760px; margin: 0 auto; padding: 80px 32px 64px;
+    text-align: center; }
+  .landing h1 { font-size: 38px; margin: 0 0 12px; font-weight: 700;
+    letter-spacing: -0.02em; }
+  .landing p.lead { font-size: 17px; color: var(--muted);
+    margin: 0 0 36px; line-height: 1.6; }
+  .landing .url-bar { padding: 0; }
+  .landing .examples { margin-top: 28px; font-size: 13px; color: var(--muted); }
+  .landing .examples a { font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px; }
+
+  .transcript-col h2 { font-size: 13px; text-transform: uppercase;
+    letter-spacing: .1em; color: var(--muted); margin: 0 0 12px; }
+  .tabs { display: inline-flex; background: var(--panel); border: 1px solid var(--border);
+    border-radius: 999px; padding: 4px; margin-bottom: 20px; }
+  .tabs button { background: transparent; border: 0; color: var(--muted);
+    padding: 7px 16px; border-radius: 999px; cursor: pointer; font: inherit;
+    font-size: 13px; transition: all .15s ease; }
+  .tabs button.active { background: var(--accent); color: white; }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  #paragraph-view { font-size: 18px; line-height: 1.85; }
+  #paragraph-view p { margin: 0 0 20px; }
+
+  .snippet { display: flex; gap: 14px; align-items: baseline;
+    padding: 8px 12px; border-radius: 6px; cursor: pointer;
+    transition: background .12s ease; font-size: 16px; line-height: 1.7; }
+  .snippet:hover { background: var(--hover); }
+  .snippet.active { background: var(--hover);
+    box-shadow: inset 3px 0 0 var(--accent); }
+  .snippet time { flex: 0 0 64px; font-variant-numeric: tabular-nums;
+    color: var(--link); font-size: 13px; padding-top: 3px; }
+  .snippet .t { flex: 1; }
+
+  .player-section { max-width: 920px; margin: 48px auto 24px;
+    padding: 0 32px; }
+  .player-section h2 { font-size: 13px; text-transform: uppercase;
+    letter-spacing: .1em; color: var(--muted); margin: 0 0 12px; }
+  .player { position: relative; width: 100%; padding-bottom: 56.25%;
+    background: #000; border-radius: 12px; overflow: hidden;
+    border: 1px solid var(--border); }
+  .player iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+  .player .thumb { position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; cursor: pointer; }
+  .player .play-btn { position: absolute; inset: 0; display: flex;
+    align-items: center; justify-content: center; cursor: pointer;
+    background: rgba(0,0,0,.25); transition: background .2s; }
+  .player .play-btn:hover { background: rgba(0,0,0,.45); }
+  .player .play-btn svg { width: 72px; height: 72px;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,.5)); }
+  .player.loaded .thumb, .player.loaded .play-btn { display: none; }
+
+  /* Docked floating mini-player (appears once the user plays the video) */
+  .player-section.docked { position: fixed;
+    right: 16px; bottom: 16px;
+    width: min(380px, 90vw); margin: 0; padding: 0; z-index: 50;
+    box-shadow: 0 12px 40px rgba(0,0,0,.45);
+    border-radius: 12px; background: var(--panel);
+    transition: transform .2s ease, opacity .2s ease; }
+  .player-section.docked h2 { display: none; }
+  .player-section.docked .player { border-radius: 12px 12px 0 0; }
+  .player-section.docked .dock-bar { display: flex; }
+
+  .dock-bar { display: none; align-items: center; justify-content: space-between;
+    padding: 6px 10px; background: var(--panel);
+    border-radius: 0 0 12px 12px; }
+  .dock-bar .label { font-size: 12px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding-right: 8px; }
+  .dock-bar .dock-actions { display: flex; gap: 4px; }
+  .dock-bar button { background: transparent; border: 0; color: var(--muted);
+    cursor: pointer; padding: 4px 8px; border-radius: 4px;
+    font: inherit; font-size: 14px; line-height: 1; }
+  .dock-bar button:hover { background: var(--hover); color: var(--text); }
+
+  .actions { margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }
+  .actions a, .actions button { background: var(--panel); border: 1px solid var(--border);
+    color: var(--text); padding: 8px 14px; border-radius: 6px; font: inherit;
+    font-size: 13px; cursor: pointer; text-decoration: none;
+    transition: background .12s ease; }
+  .actions a:hover, .actions button:hover { background: var(--hover); }
+
+  footer { max-width: 1500px; margin: 0 auto; padding: 24px 28px 40px;
+    border-top: 1px solid var(--border); color: var(--muted); font-size: 13px;
+    display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+    justify-content: space-between; }
+  footer .video-link { display: flex; gap: 10px; flex-wrap: wrap;
+    align-items: center; min-width: 0; }
+  footer .video-link strong { color: var(--text); font-weight: 500; }
+  footer .video-link a { word-break: break-all; }
+  footer .meta-pills { display: flex; gap: 6px; flex-wrap: wrap; }
+  footer .pill { background: var(--panel); border: 1px solid var(--border);
+    padding: 3px 10px; border-radius: 999px; font-size: 12px; }
+  footer .credit { font-size: 12px; opacity: .8; }
+"""
+
+
 _TEMPLATE = """<!doctype html>
 <html lang="{lang}" data-theme="auto">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} — transcript</title>
-<style>
-  :root,
-  html[data-theme="dark"] {{
-    --bg: #0f1115;     --panel: #161922;   --text: #e7e9ee;
-    --muted: #9aa3b2;  --accent: #ff5252;  --link: #7cb7ff;
-    --border: #262b36; --hover: #1f2330;
-  }}
-  html[data-theme="light"] {{
-    --bg: #f7f8fa;     --panel: #ffffff;   --text: #1b1f27;
-    --muted: #5b6675;  --accent: #d22d2d;  --link: #1559c2;
-    --border: #e3e7ee; --hover: #f0f3f8;
-  }}
-  html[data-theme="sepia"] {{
-    --bg: #f5ecd9;     --panel: #fbf5e6;   --text: #4b3a23;
-    --muted: #8a755a;  --accent: #b35a1f;  --link: #8a4a14;
-    --border: #e3d6b6; --hover: #efe3c6;
-  }}
-  html[data-theme="midnight"] {{
-    --bg: #0a1024;     --panel: #111a36;   --text: #d6e1ff;
-    --muted: #7a8bbf;  --accent: #4cc9ff;  --link: #82d3ff;
-    --border: #1c2750; --hover: #16224a;
-  }}
-  html[data-theme="solarized"] {{
-    --bg: #002b36;     --panel: #073642;   --text: #eee8d5;
-    --muted: #93a1a1;  --accent: #b58900;  --link: #2aa198;
-    --border: #0d4250; --hover: #0c3a47;
-  }}
-  html[data-theme="forest"] {{
-    --bg: #102018;     --panel: #163024;   --text: #e0efe2;
-    --muted: #8fb3a0;  --accent: #f5b14b;  --link: #7ddca4;
-    --border: #21402f; --hover: #1c3a2a;
-  }}
-  @media (prefers-color-scheme: light) {{
-    html[data-theme="auto"] {{
-      --bg: #f7f8fa;     --panel: #ffffff;   --text: #1b1f27;
-      --muted: #5b6675;  --accent: #d22d2d;  --link: #1559c2;
-      --border: #e3e7ee; --hover: #f0f3f8;
-    }}
-  }}
-
-  * {{ box-sizing: border-box; }}
-  html, body {{ margin: 0; padding: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, "Noto Sans", "Noto Sans Devanagari", sans-serif;
-    transition: background .2s ease, color .2s ease; }}
-  a {{ color: var(--link); text-decoration: none; }}
-  a:hover {{ text-decoration: underline; }}
-
-  header {{ padding: 16px 28px; border-bottom: 1px solid var(--border);
-    background: var(--panel); position: sticky; top: 0; z-index: 5;
-    display: flex; align-items: center; gap: 16px; }}
-  header h1 {{ margin: 0; font-size: 17px; font-weight: 600;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }}
-
-  .theme-switch {{ display: inline-flex; align-items: center; gap: 8px;
-    color: var(--muted); font-size: 13px; }}
-  .theme-switch select {{ background: var(--bg); color: var(--text);
-    border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
-    font: inherit; font-size: 13px; cursor: pointer; }}
-
-  main {{ max-width: 1100px; margin: 0 auto;
-    padding: 28px 32px 32px; }}
-
-  .transcript-col h2 {{ font-size: 13px; text-transform: uppercase;
-    letter-spacing: .1em; color: var(--muted); margin: 0 0 12px; }}
-  .tabs {{ display: inline-flex; background: var(--panel); border: 1px solid var(--border);
-    border-radius: 999px; padding: 4px; margin-bottom: 20px; }}
-  .tabs button {{ background: transparent; border: 0; color: var(--muted);
-    padding: 7px 16px; border-radius: 999px; cursor: pointer; font: inherit;
-    font-size: 13px; transition: all .15s ease; }}
-  .tabs button.active {{ background: var(--accent); color: white; }}
-
-  .view {{ display: none; }}
-  .view.active {{ display: block; }}
-
-  #paragraph-view {{ font-size: 18px; line-height: 1.85; }}
-  #paragraph-view p {{ margin: 0 0 20px; }}
-
-  .snippet {{ display: flex; gap: 14px; align-items: baseline;
-    padding: 8px 12px; border-radius: 6px; cursor: pointer;
-    transition: background .12s ease; font-size: 16px; line-height: 1.7; }}
-  .snippet:hover {{ background: var(--hover); }}
-  .snippet.active {{ background: var(--hover);
-    box-shadow: inset 3px 0 0 var(--accent); }}
-  .snippet time {{ flex: 0 0 64px; font-variant-numeric: tabular-nums;
-    color: var(--link); font-size: 13px; padding-top: 3px; }}
-  .snippet .t {{ flex: 1; }}
-
-  .player-section {{ max-width: 920px; margin: 48px auto 24px;
-    padding: 0 32px; }}
-  .player-section h2 {{ font-size: 13px; text-transform: uppercase;
-    letter-spacing: .1em; color: var(--muted); margin: 0 0 12px; }}
-  .player {{ position: relative; width: 100%; padding-bottom: 56.25%;
-    background: #000; border-radius: 12px; overflow: hidden;
-    border: 1px solid var(--border); }}
-  .player iframe {{ position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }}
-  .player .thumb {{ position: absolute; inset: 0; width: 100%; height: 100%;
-    object-fit: cover; cursor: pointer; }}
-  .player .play-btn {{ position: absolute; inset: 0; display: flex;
-    align-items: center; justify-content: center; cursor: pointer;
-    background: rgba(0,0,0,.25); transition: background .2s; }}
-  .player .play-btn:hover {{ background: rgba(0,0,0,.45); }}
-  .player .play-btn svg {{ width: 72px; height: 72px;
-    filter: drop-shadow(0 2px 6px rgba(0,0,0,.5)); }}
-  .player.loaded .thumb, .player.loaded .play-btn {{ display: none; }}
-
-  /* Docked floating mini-player (appears once the user plays the video) */
-  .player-section.docked {{ position: fixed;
-    right: 16px; bottom: 16px;
-    width: min(380px, 90vw); margin: 0; padding: 0; z-index: 50;
-    box-shadow: 0 12px 40px rgba(0,0,0,.45);
-    border-radius: 12px; background: var(--panel);
-    transition: transform .2s ease, opacity .2s ease; }}
-  .player-section.docked h2 {{ display: none; }}
-  .player-section.docked .player {{ border-radius: 12px 12px 0 0; }}
-  .player-section.docked .dock-bar {{ display: flex; }}
-
-  .dock-bar {{ display: none; align-items: center; justify-content: space-between;
-    padding: 6px 10px; background: var(--panel);
-    border-radius: 0 0 12px 12px; }}
-  .dock-bar .label {{ font-size: 12px; color: var(--muted);
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    padding-right: 8px; }}
-  .dock-bar .dock-actions {{ display: flex; gap: 4px; }}
-  .dock-bar button {{ background: transparent; border: 0; color: var(--muted);
-    cursor: pointer; padding: 4px 8px; border-radius: 4px;
-    font: inherit; font-size: 14px; line-height: 1; }}
-  .dock-bar button:hover {{ background: var(--hover); color: var(--text); }}
-
-  .actions {{ margin-top: 16px; display: flex; gap: 8px; flex-wrap: wrap; }}
-  .actions a, .actions button {{ background: var(--panel); border: 1px solid var(--border);
-    color: var(--text); padding: 8px 14px; border-radius: 6px; font: inherit;
-    font-size: 13px; cursor: pointer; text-decoration: none;
-    transition: background .12s ease; }}
-  .actions a:hover, .actions button:hover {{ background: var(--hover); }}
-
-  footer {{ max-width: 1500px; margin: 0 auto; padding: 24px 28px 40px;
-    border-top: 1px solid var(--border); color: var(--muted); font-size: 13px;
-    display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
-    justify-content: space-between; }}
-  footer .video-link {{ display: flex; gap: 10px; flex-wrap: wrap;
-    align-items: center; min-width: 0; }}
-  footer .video-link strong {{ color: var(--text); font-weight: 500; }}
-  footer .video-link a {{ word-break: break-all; }}
-  footer .meta-pills {{ display: flex; gap: 6px; flex-wrap: wrap; }}
-  footer .pill {{ background: var(--panel); border: 1px solid var(--border);
-    padding: 3px 10px; border-radius: 999px; font-size: 12px; }}
-  footer .credit {{ font-size: 12px; opacity: .8; }}
-</style>
+<style>{shared_css}</style>
 </head>
 <body>
 <header>
@@ -200,6 +240,21 @@ _TEMPLATE = """<!doctype html>
     </select>
   </label>
 </header>
+
+<section class="url-bar">
+  <form action="/" method="get" id="url-form">
+    <input type="text" name="url" id="url-input" required autocomplete="off"
+      placeholder="Paste YouTube URL or 11-char video id…"
+      value="{prefilled_url}">
+    <input type="text" name="lang" id="lang-input" autocomplete="off"
+      placeholder="languages e.g. en,hi" value="{prefilled_langs}">
+    <button type="submit" id="submit-btn">Get transcript</button>
+  </form>
+  <div class="notice" id="offline-notice" style="display:none">
+    This page is offline — run <code>python cli.py --serve</code> from the
+    project folder, then open the printed URL to fetch new videos.
+  </div>
+</section>
 
 <main>
   <section class="transcript-col">
@@ -403,6 +458,90 @@ _TEMPLATE = """<!doctype html>
 
   const blob = new Blob([FULL_TEXT], {{ type: 'text/plain;charset=utf-8' }});
   document.getElementById('download-btn').href = URL.createObjectURL(blob);
+
+  if (window.location.protocol === 'file:') {{
+    document.getElementById('offline-notice').style.display = 'block';
+  }}
+  const _form = document.getElementById('url-form');
+  if (_form) _form.addEventListener('submit', () => {{
+    if (window.location.protocol === 'file:') return;
+    const btn = document.getElementById('submit-btn');
+    btn.textContent = 'Fetching…'; btn.disabled = true;
+  }});
+</script>
+</body>
+</html>
+"""
+
+
+_LANDING_TEMPLATE = """<!doctype html>
+<html lang="en" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YT Transcriptor</title>
+<style>{shared_css}</style>
+</head>
+<body>
+<header>
+  <h1>YT Transcriptor</h1>
+  <label class="theme-switch">
+    Theme
+    <select id="theme-select" aria-label="Theme">
+      <option value="auto">Auto</option>
+      <option value="dark">Dark</option>
+      <option value="light">Light</option>
+      <option value="sepia">Sepia</option>
+      <option value="midnight">Midnight</option>
+      <option value="solarized">Solarized</option>
+      <option value="forest">Forest</option>
+    </select>
+  </label>
+</header>
+
+<section class="landing">
+  <h1>Turn any YouTube video into clean text</h1>
+  <p class="lead">Paste a YouTube URL (or just the 11-char video id) and
+    we'll fetch the transcript, group it into paragraphs, and let you
+    scrub through the original video with clickable timestamps.</p>
+
+  <section class="url-bar">
+    <form action="/" method="get" id="url-form">
+      <input type="text" name="url" id="url-input" required autocomplete="off"
+        placeholder="https://youtube.com/watch?v=…"
+        value="{prefilled_url}" autofocus>
+      <input type="text" name="lang" id="lang-input" autocomplete="off"
+        placeholder="languages e.g. en,hi" value="{prefilled_langs}">
+      <button type="submit" id="submit-btn">Get transcript</button>
+    </form>
+    {error_block}
+  </section>
+
+  <div class="examples">
+    Try: <a href="?url=IjIVBleSfc4&lang=hi">IjIVBleSfc4 (Hindi)</a>
+    &nbsp;·&nbsp; <a href="?url=jNQXAC9IVRw">jNQXAC9IVRw (first ever YouTube video)</a>
+  </div>
+</section>
+
+<footer>
+  <div class="video-link"><strong>YT Transcriptor</strong> · paste a URL above</div>
+  <div class="credit">Powered by youtube-transcript-api</div>
+</footer>
+
+<script>
+  const THEME_KEY = 'yt-trans-theme';
+  const themeSelect = document.getElementById('theme-select');
+  const savedTheme = localStorage.getItem(THEME_KEY) || 'auto';
+  document.documentElement.setAttribute('data-theme', savedTheme);
+  themeSelect.value = savedTheme;
+  themeSelect.addEventListener('change', () => {{
+    document.documentElement.setAttribute('data-theme', themeSelect.value);
+    localStorage.setItem(THEME_KEY, themeSelect.value);
+  }});
+  document.getElementById('url-form').addEventListener('submit', () => {{
+    const btn = document.getElementById('submit-btn');
+    btn.textContent = 'Fetching…'; btn.disabled = true;
+  }});
 </script>
 </body>
 </html>
@@ -432,13 +571,20 @@ def _timestamped_html(snippets: list[dict]) -> str:
     return "\n".join(rows) or "<p><em>(no snippets)</em></p>"
 
 
-def render(result: "TranscriptionResult", *, title: str | None = None) -> str:
+def render(
+    result: "TranscriptionResult",
+    *,
+    title: str | None = None,
+    prefilled_url: str = "",
+    prefilled_langs: str = "",
+) -> str:
     """Render a TranscriptionResult to a complete HTML document string."""
     page_title = title or f"YouTube transcript · {result.video_id}"
     duration_human = format_timestamp(result.duration) if result.duration else "?"
     kind = "auto-generated" if result.is_generated else "manual"
 
     return _TEMPLATE.format(
+        shared_css=_SHARED_CSS,
         lang=html.escape(result.language_code or "en"),
         title=html.escape(page_title),
         url=html.escape(result.url),
@@ -454,4 +600,26 @@ def render(result: "TranscriptionResult", *, title: str | None = None) -> str:
         snippets_json=json.dumps(result.raw, ensure_ascii=False),
         full_text_json=json.dumps(result.full_text, ensure_ascii=False),
         download_name=html.escape(f"{result.video_id}.{result.language_code}.txt"),
+        prefilled_url=html.escape(prefilled_url or result.url, quote=True),
+        prefilled_langs=html.escape(prefilled_langs, quote=True),
+    )
+
+
+def render_landing(
+    *,
+    error: str | None = None,
+    prefilled_url: str = "",
+    prefilled_langs: str = "",
+) -> str:
+    """Render the empty-state landing page (no video fetched yet)."""
+    error_block = (
+        f'<div class="error-msg">{html.escape(error)}</div>'
+        if error
+        else ""
+    )
+    return _LANDING_TEMPLATE.format(
+        shared_css=_SHARED_CSS,
+        prefilled_url=html.escape(prefilled_url, quote=True),
+        prefilled_langs=html.escape(prefilled_langs, quote=True),
+        error_block=error_block,
     )

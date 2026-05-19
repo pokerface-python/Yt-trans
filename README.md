@@ -23,6 +23,9 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
 - One-flag browser view (`--open`): self-contained HTML page with embedded
   YouTube player, clickable timestamps, copy/download buttons, and a 7-way
   theme switcher (Auto / Dark / Light / Sepia / Midnight / Solarized / Forest).
+- Built-in **local web UI** (`--serve`): launches a tiny HTTP server with a
+  URL input bar so you can fetch new videos right from the browser — no
+  external dependencies.
 - Friendly error messages for `TranscriptsDisabled`, `VideoUnavailable`,
   `IpBlocked`, etc.
 - Both a Python API (`Transcriptor`) and a CLI (`cli.py`).
@@ -30,24 +33,34 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
 ## Quick start
 
 ```bash
-git clone <your-repo-url> yt-trans
-cd yt-trans
+git clone https://github.com/pokerface-python/Yt-trans.git
+cd Yt-trans
 
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-
-python cli.py "https://youtu.be/IjIVBleSfc4" --open
 ```
 
-That last command fetches the transcript and pops open an interactive HTML
-view in your default browser. Done.
+Then pick one of these two ways to use it:
+
+```bash
+# 1) Web UI — paste URLs into a form in your browser
+python cli.py --serve --open
+#    -> opens http://127.0.0.1:8000/ with a URL input bar
+
+# 2) One-shot CLI — fetch a single video and open the HTML view
+python cli.py "https://youtu.be/IjIVBleSfc4" --open
+```
 
 ## CLI
 
 ```bash
 # default: prints paragraph-formatted full text to stdout
 python cli.py https://www.youtube.com/watch?v=IjIVBleSfc4
+
+# launch the local web UI (paste URLs into a form in your browser)
+python cli.py --serve --open
+python cli.py --serve --host 0.0.0.0 --port 9000   # bind to LAN, custom port
 
 # open a browser view (player + clickable timestamps + paragraphs)
 python cli.py https://youtu.be/IjIVBleSfc4 -l hi en --open
@@ -78,7 +91,10 @@ Flags:
 | `-l, --languages CODE ...` | preferred language codes in priority order             |
 | `-f, --format FMT`         | `text`, `paragraphs` (default), `json`, `srt`, `vtt`, `rich`, `html` |
 | `-o, --output PATH`        | write to file instead of stdout                        |
-| `--open`                   | render an interactive HTML view and open it in your default browser |
+| `--open`                   | render an interactive HTML view and open it in your default browser (also auto-opens the served URL when combined with `--serve`) |
+| `--serve`                  | start the local web UI on `http://127.0.0.1:8000/`     |
+| `--host HOST`              | bind interface for `--serve` (default `127.0.0.1`; use `0.0.0.0` for LAN) |
+| `--port PORT`              | port for `--serve` (default `8000`)                    |
 | `--list`                   | list available transcripts and exit                    |
 | `--preserve-formatting`    | keep `<i>` / `<b>` tags from the captions              |
 | `--prefer-generated`       | prefer auto-generated transcripts over manual ones     |
@@ -103,6 +119,27 @@ Flags:
 
 The file is fully offline (no external CSS/JS); only the embedded YouTube
 player needs the network.
+
+### Web UI (`--serve`)
+
+```bash
+python cli.py --serve --open
+```
+
+This starts a tiny stdlib HTTP server (no Flask, no extra dependencies)
+on `http://127.0.0.1:8000/`. The landing page is just a single input bar:
+paste any YouTube URL (or 11-char id), optionally a comma-separated list of
+language codes (e.g. `en,hi`), hit *Get transcript*, and the same
+interactive viewer described above renders in place.
+
+URLs are also shareable: `http://127.0.0.1:8000/?url=IjIVBleSfc4&lang=hi`
+works as a direct deep link.
+
+The same input bar is present at the top of every rendered transcript page,
+so you can keep swapping videos without going back to the home page.
+
+Bind to your LAN with `--host 0.0.0.0` to make it reachable from other
+devices on your network (phones, tablets, etc.).
 
 ## Python API
 
@@ -137,8 +174,9 @@ text = transcribe("https://youtu.be/IjIVBleSfc4").full_text
 yt-trans/
 ├── transcriptor.py   # Transcriptor class + TranscriptionResult
 ├── html_view.py      # render TranscriptionResult -> standalone HTML page
+├── server.py         # tiny stdlib HTTP server backing the --serve web UI
 ├── utils.py          # URL/id parsing, text cleanup, timestamp formatting
-├── cli.py            # argparse CLI entry-point
+├── cli.py            # argparse CLI entry-point (--serve, --open, etc.)
 ├── trans_api.py      # minimal usage example
 ├── requirements.txt
 └── README.md

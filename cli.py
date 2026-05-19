@@ -32,7 +32,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "Accepts any YouTube URL or 11-char video id."
         ),
     )
-    p.add_argument("url", help="YouTube URL or 11-char video id")
+    p.add_argument(
+        "url",
+        nargs="?",
+        help=(
+            "YouTube URL or 11-char video id "
+            "(optional when --serve is used)"
+        ),
+    )
     p.add_argument(
         "-l",
         "--languages",
@@ -87,6 +94,26 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Suppress the metadata header; print only the transcript body",
     )
+    p.add_argument(
+        "--serve",
+        action="store_true",
+        help=(
+            "Start a local web server with a URL input bar. Paste a YouTube "
+            "URL into the page and the transcript will be fetched on demand. "
+            "Combine with --open to auto-launch your browser."
+        ),
+    )
+    p.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host/interface to bind the server to (default: 127.0.0.1)",
+    )
+    p.add_argument(
+        "--port",
+        type=int,
+        default=8000,
+        help="Port to bind the server to (default: 8000)",
+    )
     return p
 
 
@@ -130,6 +157,24 @@ def _list_transcripts(transcriptor: Transcriptor, url: str) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+
+    if args.serve:
+        from server import serve
+
+        serve(
+            host=args.host,
+            port=args.port,
+            languages=args.languages,
+            open_browser=args.open_in_browser,
+        )
+        return 0
+
+    if not args.url:
+        print(
+            "error: url is required (or pass --serve to run the web UI)",
+            file=sys.stderr,
+        )
+        return 2
 
     transcriptor = Transcriptor(
         languages=args.languages,
