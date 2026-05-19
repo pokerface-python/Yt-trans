@@ -13,6 +13,11 @@ extend later (translation, summarisation, chaptering, etc.).
 
 from __future__ import annotations
 
+import json as _json
+import logging
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Sequence, Union
@@ -40,7 +45,40 @@ from utils import (
     to_paragraphs,
 )
 
+_log = logging.getLogger("yt-trans.transcriptor")
+
 DEFAULT_LANGUAGES: Sequence[str] = ("en", "en-US", "en-GB", "hi")
+
+
+def fetch_video_title(video_id: str, *, timeout: float = 3.0) -> Optional[str]:
+    """Best-effort lookup of a YouTube video's title.
+
+    Uses the public oEmbed endpoint, which needs no API key and returns
+    ``{"title": "...", ...}``. Returns ``None`` (silently) on any
+    network/parse failure — title is a nice-to-have, never required.
+    """
+    if not video_id:
+        return None
+    qs = urllib.parse.urlencode({
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "format": "json",
+    })
+    url = f"https://www.youtube.com/oembed?{qs}"
+    try:
+        req = urllib.request.Request(
+            url, headers={"User-Agent": "yt-trans/1.0 (+oembed)"}
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = _json.loads(resp.read().decode("utf-8", "replace"))
+    except (urllib.error.URLError, urllib.error.HTTPError,
+            TimeoutError, _json.JSONDecodeError, ValueError) as exc:
+        _log.debug("oEmbed title lookup failed for %s: %s", video_id, exc)
+        return None
+    except Exception as exc:  # noqa: BLE001 - never blow up on title
+        _log.debug("oEmbed unexpected error for %s: %s", video_id, exc)
+        return None
+    title = (data.get("title") or "").strip()
+    return title or None
 
 
 class TranscriptionError(RuntimeError):
@@ -61,6 +99,14 @@ class TranscriptionResult:
     snippet_count: int
     duration: float
     raw: list = field(default_factory=list)
+    # Human-readable video title (best-effort via oEmbed). May be None
+    # if the network lookup failed or YouTube didn't return one.
+    title: Optional[str] = None
+
+    @property
+    def display_title(self) -> str:
+        """Title if we have one, otherwise the bare video id."""
+        return self.title or self.video_id
 
     def save(
         self,
@@ -162,6 +208,7 @@ class Transcriptor:
             snippet_count=len(snippets),
             duration=duration,
             raw=fetched.to_raw_data(),
+            title=fetch_video_title(video_id),
         )
 
     def to_format(

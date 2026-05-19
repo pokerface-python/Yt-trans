@@ -1,10 +1,17 @@
 """Tiny stdlib HTTP server for the yt-trans HTML viewer.
 
-Exposes a single page:
+Endpoints:
 
-    GET /                            -> landing page with a URL input bar
-    GET /?url=<url>&lang=en,hi       -> fetches the transcript and renders
-                                        the full interactive HTML view
+    GET  /                       -> landing page with a URL input bar
+    GET  /?url=<url>&lang=en,hi  -> fetches the transcript and renders
+                                    the full interactive HTML view
+    POST /api/refine             -> AI clean-up / translation, JSON body:
+        {
+          "text":     "<full transcript>",
+          "language": "en",                 # source BCP-47 (optional)
+          "mode":     "refine" | "translate",
+          "target_language": "en"|"hi"|...  # required if mode=translate
+        }
 
 No external dependencies — just `http.server` from the standard library.
 """
@@ -83,17 +90,41 @@ def _build_handler(default_langs: Sequence[str]):
 
             text = (payload.get("text") or "").strip()
             language = (payload.get("language") or "en").strip() or "en"
+            mode = (payload.get("mode") or "refine").strip().lower() or "refine"
+            target_language = (
+                payload.get("target_language") or ""
+            ).strip().lower()
+
             if not text:
                 self._send_json({"error": "field 'text' is required"}, status=400)
                 return
+            if mode not in ("refine", "translate"):
+                self._send_json(
+                    {"error": f"invalid mode {mode!r}; "
+                              "expected 'refine' or 'translate'"},
+                    status=400,
+                )
+                return
+            if mode == "translate" and not target_language:
+                self._send_json(
+                    {"error": "translate mode requires 'target_language' "
+                              "(e.g. 'en' or 'hi')"},
+                    status=400,
+                )
+                return
 
             try:
-                result = refine(text, language=language)
+                result = refine(
+                    text,
+                    language=language,
+                    mode=mode,
+                    target_language=target_language,
+                )
             except RefinementError as exc:
                 self._send_json({"error": str(exc)}, status=503)
                 return
             except Exception as exc:  # noqa: BLE001
-                log.exception("AI refine crashed")
+                log.exception("AI %s crashed", mode)
                 self._send_json(
                     {"error": f"unexpected: {exc}"}, status=500
                 )

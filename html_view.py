@@ -7,13 +7,19 @@ The page bundles:
       (this is what triggers the "Error 153 / configuration error" message)
     * a 7-way theme switcher (Auto / Dark / Light / Sepia / Midnight /
       Solarized / Forest) saved to localStorage
+    * a header row showing the video title (or just the id, as a chip,
+      when the oEmbed title lookup fails) on the right of "Transcript"
     * the cleaned full-text transcript grouped into paragraphs
     * a timestamped view where every snippet is a clickable link that seeks
       the embedded player to that exact moment.
+    * an "AI: Refine or Translate" split-button that POSTs to /api/refine.
+      The dropdown offers three actions: Refine (clean up, keep language),
+      Translate -> English, Translate -> Hindi. The result is toggleable
+      against the original via a pill switch.
 
 The output is a single .html file with inlined CSS + JS — no external
 assets, works offline (the embedded YouTube player itself is the only
-network dependency).
+network dependency; the AI features need the local server, not file://).
 """
 
 from __future__ import annotations
@@ -151,7 +157,26 @@ _SHARED_CSS = """
     font-size: 12px; }
 
   .transcript-col h2 { font-size: 13px; text-transform: uppercase;
-    letter-spacing: .1em; color: var(--muted); margin: 0 0 12px; }
+    letter-spacing: .1em; color: var(--muted); margin: 0; }
+
+  .transcript-head { display: flex; align-items: baseline;
+    justify-content: space-between; gap: 16px; margin: 0 0 12px;
+    flex-wrap: wrap; min-width: 0; }
+  .transcript-head .video-info { display: inline-flex; align-items: baseline;
+    gap: 8px; min-width: 0; max-width: 100%;
+    font-size: 14px; color: var(--text); }
+  .transcript-head .video-info .vt-title {
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    max-width: 60vw; font-weight: 500; color: var(--text);
+    text-decoration: none; }
+  .transcript-head .video-info .vt-title:hover { color: var(--link); }
+  .transcript-head .video-info .vt-id {
+    font-family: ui-monospace, Menlo, monospace; font-size: 12px;
+    color: var(--muted); background: var(--hover);
+    padding: 2px 8px; border-radius: 999px; flex: 0 0 auto; }
+  @media (max-width: 640px) {
+    .transcript-head .video-info .vt-title { max-width: 80vw; }
+  }
   .tabs { display: inline-flex; background: var(--panel); border: 1px solid var(--border);
     border-radius: 999px; padding: 4px; margin-bottom: 20px; }
   .tabs button { background: transparent; border: 0; color: var(--muted);
@@ -234,6 +259,26 @@ _SHARED_CSS = """
     color: var(--muted); padding: 5px 12px; border-radius: 999px;
     font-size: 12px; font-weight: 500; }
   .actions .ai-toggle button.active { background: var(--accent); color: white; }
+
+  .ai-menu-wrap { position: relative; display: inline-block; }
+  .ai-menu-wrap > button.primary { padding-right: 32px; position: relative; }
+  .ai-menu-wrap > button.primary::after { content: "\\25be";
+    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
+    font-size: 11px; opacity: .85; }
+  .ai-menu { position: absolute; top: calc(100% + 4px); right: 0;
+    min-width: 200px; padding: 6px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.35);
+    z-index: 20; display: flex; flex-direction: column; gap: 2px; }
+  .ai-menu[hidden] { display: none; }
+  .ai-menu button { background: transparent; border: 0; color: var(--text);
+    text-align: left; padding: 9px 12px; border-radius: 6px; cursor: pointer;
+    font: inherit; font-size: 13px; line-height: 1.3;
+    display: flex; flex-direction: column; gap: 2px; }
+  .ai-menu button:hover, .ai-menu button:focus-visible {
+    background: var(--hover); outline: none; }
+  .ai-menu .label { color: var(--text); font-weight: 500; }
+  .ai-menu .hint { color: var(--muted); font-size: 11px; font-weight: 400; }
   .ai-error { margin-top: 12px; padding: 12px 14px; border-radius: 8px;
     border: 1px solid var(--accent); background: var(--panel);
     color: var(--text); font-size: 13px; white-space: pre-wrap;
@@ -295,7 +340,10 @@ _TEMPLATE = """<!doctype html>
 
 <main>
   <section class="transcript-col">
-    <h2>Transcript</h2>
+    <div class="transcript-head">
+      <h2>Transcript</h2>
+      <span class="video-info">{video_info_html}</span>
+    </div>
     <div class="tabs" role="tablist">
       <button class="active" data-target="paragraph-view">Paragraphs</button>
       <button data-target="timestamped-view">Timestamped</button>
@@ -313,12 +361,33 @@ _TEMPLATE = """<!doctype html>
       <a href="{url}" target="_blank" rel="noopener">Open on YouTube ↗</a>
       <button id="copy-btn">Copy full text</button>
       <a id="download-btn" download="{download_name}">Download .txt</a>
-      <button id="ai-btn" class="primary" title="Clean up auto-generated text with AI">
-        Refine with AI
-      </button>
+      <div class="ai-menu-wrap">
+        <button id="ai-btn" class="primary" type="button"
+          aria-haspopup="true" aria-expanded="false"
+          title="Clean up or translate with AI">
+          AI: Refine or Translate
+        </button>
+        <div class="ai-menu" id="ai-menu" hidden role="menu">
+          <button type="button" role="menuitem"
+            data-mode="refine" data-target="">
+            <span class="label">Refine (clean up)</span>
+            <span class="hint">Punctuation, paragraphs · keep source language</span>
+          </button>
+          <button type="button" role="menuitem"
+            data-mode="translate" data-target="en">
+            <span class="label">Translate → English</span>
+            <span class="hint">Full translation, keeps meaning &amp; tone</span>
+          </button>
+          <button type="button" role="menuitem"
+            data-mode="translate" data-target="hi">
+            <span class="label">Translate → हिन्दी (Hindi)</span>
+            <span class="hint">Full translation in Devanagari script</span>
+          </button>
+        </div>
+      </div>
       <div class="ai-toggle" id="ai-toggle" style="display:none">
         <button class="active" data-view="original">Original</button>
-        <button data-view="refined">AI Refined</button>
+        <button data-view="refined">AI Output</button>
       </div>
       <span class="ai-meta" id="ai-meta" style="display:none"></span>
     </div>
@@ -350,8 +419,7 @@ _TEMPLATE = """<!doctype html>
 
 <footer>
   <div class="video-link">
-    <strong>Video:</strong>
-    <a href="{url}" target="_blank" rel="noopener">{url}</a>
+    {video_title_footer_html}<a href="{url}" target="_blank" rel="noopener">{url}</a>
     <span class="meta-pills">
       <span class="pill">{language} ({language_code})</span>
       <span class="pill">{kind}</span>
@@ -519,21 +587,27 @@ _TEMPLATE = """<!doctype html>
     btn.textContent = 'Fetching…'; btn.disabled = true;
   }});
 
-  // ----- AI refine ---------------------------------------------------------
+  // ----- AI refine / translate --------------------------------------------
   const LANG = {language_code_json};
   const aiBtn      = document.getElementById('ai-btn');
+  const aiMenu     = document.getElementById('ai-menu');
   const aiToggle   = document.getElementById('ai-toggle');
   const aiMeta     = document.getElementById('ai-meta');
   const aiError    = document.getElementById('ai-error');
   const paraView   = document.getElementById('paragraph-view');
   const originalHTML = paraView.innerHTML;
-  let refinedHTML = null;
-  let refinedText = null;
+  let aiOutputHTML = null;
+  let aiOutputText = null;
+
+  const TARGET_LABELS = {{
+    en: 'English',
+    hi: 'हिन्दी',
+  }};
 
   if (window.location.protocol === 'file:') {{
     aiBtn.disabled = true;
-    aiBtn.title = 'AI refine only works when served. Run: python cli.py --serve';
-    aiBtn.textContent = 'Refine with AI (server only)';
+    aiBtn.title = 'AI only works when served. Run: python cli.py --serve';
+    aiBtn.textContent = 'AI (server only)';
   }}
 
   function escapeHTML(s) {{
@@ -548,45 +622,90 @@ _TEMPLATE = """<!doctype html>
   }}
 
   function showAIError(msg) {{
-    const hint = msg.includes('No AI provider')
-      ? msg
-      : '<strong>AI refine failed:</strong> ' + escapeHTML(msg);
-    aiError.innerHTML = hint.includes('No AI provider')
-      ? '<strong>No AI provider configured.</strong>\\n\\n' + escapeHTML(msg.replace(/^[^\\n]*\\n?/, ''))
-      : hint;
+    const isSetup = msg.indexOf('No AI provider') !== -1;
+    aiError.innerHTML = isSetup
+      ? '<strong>No AI provider configured.</strong>\\n\\n'
+        + escapeHTML(msg.replace(/^[^\\n]*\\n?/, ''))
+      : '<strong>AI request failed:</strong> ' + escapeHTML(msg);
     aiError.style.display = 'block';
   }}
 
-  aiBtn.addEventListener('click', async () => {{
+  function setMenuOpen(open) {{
+    aiMenu.hidden = !open;
+    aiBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }}
+
+  aiBtn.addEventListener('click', (e) => {{
+    e.stopPropagation();
+    if (aiBtn.disabled) return;
+    setMenuOpen(aiMenu.hidden);
+  }});
+  document.addEventListener('click', (e) => {{
+    if (!aiMenu.contains(e.target) && e.target !== aiBtn) setMenuOpen(false);
+  }});
+  document.addEventListener('keydown', (e) => {{
+    if (e.key === 'Escape') setMenuOpen(false);
+  }});
+
+  async function runAI(mode, target) {{
+    setMenuOpen(false);
     aiError.style.display = 'none';
     aiBtn.disabled = true;
-    const orig = aiBtn.textContent;
-    aiBtn.textContent = 'Refining… (this can take a minute)';
+    const origLabel = aiBtn.textContent;
+    const verb = mode === 'translate'
+      ? 'Translating to ' + (TARGET_LABELS[target] || target) + '…'
+      : 'Refining…';
+    aiBtn.textContent = verb + ' (this can take a minute)';
     try {{
       const resp = await fetch('/api/refine', {{
         method: 'POST',
         headers: {{ 'Content-Type': 'application/json' }},
-        body: JSON.stringify({{ text: FULL_TEXT, language: LANG }})
+        body: JSON.stringify({{
+          text: FULL_TEXT, language: LANG,
+          mode: mode, target_language: target || ''
+        }})
       }});
       const data = await resp.json().catch(() => ({{ error: 'invalid server response' }}));
       if (!resp.ok || data.error) throw new Error(data.error || ('HTTP ' + resp.status));
 
-      refinedText = data.refined || '';
-      refinedHTML = renderParagraphs(refinedText);
-      paraView.innerHTML = refinedHTML;
+      aiOutputText = data.refined || '';
+      aiOutputHTML = renderParagraphs(aiOutputText);
+      paraView.innerHTML = aiOutputHTML;
 
-      aiBtn.style.display = 'none';
+      const aiBtnWrap = aiBtn.closest('.ai-menu-wrap');
+      if (aiBtnWrap) aiBtnWrap.style.display = 'none';
+
+      const outLabel = mode === 'translate'
+        ? (TARGET_LABELS[target] || target.toUpperCase())
+        : 'AI Refined';
+      const outBtn = aiToggle.querySelector('button[data-view="refined"]');
+      outBtn.textContent = outLabel;
+
       aiToggle.style.display = 'inline-flex';
       aiToggle.querySelectorAll('button').forEach(b =>
         b.classList.toggle('active', b.dataset.view === 'refined')
       );
-      aiMeta.textContent = 'via ' + data.provider + (data.model ? ' (' + data.model + ')' : '');
+
+      const modeTxt = data.mode === 'translate'
+        ? ('translated to ' + (TARGET_LABELS[data.target_language]
+                               || data.target_language || target))
+        : 'refined';
+      aiMeta.textContent = modeTxt + ' via ' + data.provider
+        + (data.model ? ' (' + data.model + ')' : '');
       aiMeta.style.display = 'inline';
+
+      document.querySelector('.tabs button[data-target="paragraph-view"]').click();
     }} catch (e) {{
       showAIError(e.message || String(e));
-      aiBtn.textContent = orig;
+      aiBtn.textContent = origLabel;
       aiBtn.disabled = false;
     }}
+  }}
+
+  aiMenu.querySelectorAll('button[data-mode]').forEach(item => {{
+    item.addEventListener('click', () => {{
+      runAI(item.dataset.mode, item.dataset.target || '');
+    }});
   }});
 
   aiToggle.querySelectorAll('button').forEach(btn => {{
@@ -594,7 +713,7 @@ _TEMPLATE = """<!doctype html>
       if (btn.classList.contains('active')) return;
       aiToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      paraView.innerHTML = btn.dataset.view === 'refined' ? refinedHTML : originalHTML;
+      paraView.innerHTML = btn.dataset.view === 'refined' ? aiOutputHTML : originalHTML;
       document.querySelector('.tabs button[data-target="paragraph-view"]').click();
     }});
   }});
@@ -685,6 +804,28 @@ def _paragraphs_html(paragraphs: str) -> str:
     return "\n".join(f"<p>{html.escape(p)}</p>" for p in chunks)
 
 
+def _video_info_html(
+    *, title: str | None, video_id: str, url: str
+) -> str:
+    """Right-aligned 'what video am I looking at' chunk shown next to the
+    Transcript heading. Falls back gracefully to just the id when no
+    title is available."""
+    vid = html.escape(video_id)
+    safe_url = html.escape(url, quote=True)
+    if title:
+        return (
+            f'<a class="vt-title" href="{safe_url}" target="_blank" '
+            f'rel="noopener" title="{html.escape(title)}">'
+            f"{html.escape(title)}</a>"
+            f'<span class="vt-id" title="Video ID">{vid}</span>'
+        )
+    return (
+        f'<a class="vt-title" href="{safe_url}" target="_blank" '
+        f'rel="noopener" title="Open on YouTube">Video</a>'
+        f'<span class="vt-id" title="Video ID">{vid}</span>'
+    )
+
+
 def _timestamped_html(snippets: list[dict]) -> str:
     rows = []
     for s in snippets:
@@ -713,6 +854,8 @@ def render(
     duration_human = format_timestamp(result.duration) if result.duration else "?"
     kind = "auto-generated" if result.is_generated else "manual"
 
+    video_title = getattr(result, "title", None)
+
     return _TEMPLATE.format(
         shared_css=_SHARED_CSS,
         lang=html.escape(result.language_code or "en"),
@@ -733,6 +876,17 @@ def render(
         download_name=html.escape(f"{result.video_id}.{result.language_code}.txt"),
         prefilled_url=html.escape(prefilled_url or result.url, quote=True),
         prefilled_langs=html.escape(prefilled_langs, quote=True),
+        video_info_html=_video_info_html(
+            title=video_title,
+            video_id=result.video_id,
+            url=result.url,
+        ),
+        video_title_footer_html=(
+            f'<strong title="{html.escape(video_title)}">'
+            f"{html.escape(video_title)}</strong> · "
+            if video_title
+            else ""
+        ),
     )
 
 

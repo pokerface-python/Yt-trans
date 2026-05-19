@@ -1,10 +1,16 @@
-"""AI-powered transcript refinement.
+"""AI-powered transcript refinement and translation.
 
-Cleans up auto-generated YouTube transcripts:
-    * adds proper punctuation and capitalization
-    * fixes obvious word-recognition errors using context
-    * breaks the wall-of-text into readable paragraphs
-    * preserves the original language and the speaker's wording
+Two modes are supported through the single :func:`refine` entry point:
+
+* ``mode="refine"`` (default) — clean up an auto-generated transcript:
+    * add proper punctuation and capitalization
+    * fix obvious word-recognition errors using context
+    * break the wall-of-text into readable paragraphs
+    * preserve the ORIGINAL language and the speaker's wording
+
+* ``mode="translate"`` — translate the whole transcript into
+  ``target_language`` (``"en"`` and ``"hi"`` are first-class but any
+  language name works) using the same provider.
 
 Supports four LLM providers, picked automatically based on what is
 configured. Priority order (highest first):
@@ -45,7 +51,8 @@ class _Provider:
     name: str = "abstract"
     model: str = ""
 
-    def refine_chunk(self, text: str, language: str) -> str:
+    def generate(self, prompt: str) -> str:
+        """Send a prompt to the LLM and return the raw text response."""
         raise NotImplementedError
 
     @classmethod
@@ -109,11 +116,11 @@ class OllamaProvider(_Provider):
         )
         return has_chat
 
-    def refine_chunk(self, text: str, language: str) -> str:
+    def generate(self, prompt: str) -> str:
         body = json.dumps(
             {
                 "model": self.model,
-                "prompt": _build_prompt(text, language),
+                "prompt": prompt,
                 "stream": False,
                 "options": {"temperature": 0.2, "num_predict": 4096},
             }
@@ -154,12 +161,12 @@ class _OpenAICompatible(_Provider):
     def is_available(cls) -> bool:
         return bool(os.environ.get(cls.api_key_env))
 
-    def refine_chunk(self, text: str, language: str) -> str:
+    def generate(self, prompt: str) -> str:
         body = json.dumps(
             {
                 "model": self.model,
                 "messages": [
-                    {"role": "user", "content": _build_prompt(text, language)},
+                    {"role": "user", "content": prompt},
                 ],
                 "temperature": 0.2,
             }
@@ -237,14 +244,14 @@ class GeminiProvider(_Provider):
             os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         )
 
-    def refine_chunk(self, text: str, language: str) -> str:
+    def generate(self, prompt: str) -> str:
         url = (
             f"https://generativelanguage.googleapis.com/v1beta/models/"
             f"{self.model}:generateContent?key={self.api_key}"
         )
         body = json.dumps(
             {
-                "contents": [{"parts": [{"text": _build_prompt(text, language)}]}],
+                "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {"temperature": 0.2},
             }
         ).encode("utf-8")
@@ -330,7 +337,7 @@ def get_provider(name: Optional[str] = None) -> _Provider:
 # prompt + chunking
 # ---------------------------------------------------------------------------
 
-_PROMPT_TEMPLATE = (
+_REFINE_PROMPT_TEMPLATE = (
     "You are a meticulous transcript editor. The text below is an "
     "AUTO-GENERATED YouTube transcript. It typically has missing "
     "punctuation, wrong/missing capitalization, run-on sentences, and "
@@ -353,8 +360,80 @@ _PROMPT_TEMPLATE = (
 )
 
 
-def _build_prompt(text: str, language: str) -> str:
-    return _PROMPT_TEMPLATE.format(text=text, language=language or "unknown")
+_TRANSLATE_PROMPT_TEMPLATE = (
+    "You are a professional translator. The text below is a YouTube "
+    "transcript in {source_language}. Translate it into {target_language}.\n"
+    "\n"
+    "Rules:\n"
+    "1. Translate the FULL text — do not summarise, omit, or add anything.\n"
+    "2. Use natural, fluent {target_language}; not a literal word-for-word "
+    "translation.\n"
+    "3. Add proper punctuation and break the output into readable "
+    "paragraphs (one topic per paragraph).\n"
+    "4. Preserve the speaker's meaning, tone, and any technical terms.\n"
+    "5. If the source already contains {target_language}, leave those "
+    "sections untouched.\n"
+    "6. Return ONLY the translated text. No preamble, no notes, no "
+    "'Here is the translation:' line. Just the translation.\n"
+    "\n"
+    "Transcript:\n"
+    '"""\n'
+    "{text}\n"
+    '"""\n'
+)
+
+
+# BCP-47 codes -> human-friendly names used in prompts and UI labels.
+_LANGUAGE_NAMES = {
+    "en": "English",
+    "hi": "Hindi (Devanagari script)",
+    "es": "Spanish",
+    "fr": "French",
+    "de": "German",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "zh": "Chinese (Simplified)",
+    "ar": "Arabic",
+    "bn": "Bengali",
+    "ta": "Tamil",
+    "te": "Telugu",
+    "mr": "Marathi",
+    "gu": "Gujarati",
+    "pa": "Punjabi (Gurmukhi)",
+    "ur": "Urdu",
+}
+
+
+def _human_language(code: str) -> str:
+    """Best-effort 'en' -> 'English' lookup; falls back to the raw code."""
+    if not code:
+        return "the source language"
+    code = code.strip().lower()
+    if code in _LANGUAGE_NAMES:
+        return _LANGUAGE_NAMES[code]
+    # Strip region suffix: 'en-US' -> 'en'
+    base = code.split("-", 1)[0]
+    return _LANGUAGE_NAMES.get(base, code)
+
+
+def _build_prompt(
+    text: str,
+    language: str,
+    *,
+    mode: str = "refine",
+    target_language: str = "",
+) -> str:
+    if mode == "translate":
+        return _TRANSLATE_PROMPT_TEMPLATE.format(
+            text=text,
+            source_language=_human_language(language),
+            target_language=_human_language(target_language),
+        )
+    return _REFINE_PROMPT_TEMPLATE.format(
+        text=text, language=language or "unknown"
+    )
 
 
 _WRAPPER_RE = re.compile(
@@ -426,36 +505,82 @@ def refine(
     text: str,
     language: str = "en",
     *,
+    mode: str = "refine",
+    target_language: str = "",
     provider: Optional[_Provider] = None,
     max_chunk_words: int = 1200,
 ) -> dict:
-    """Refine a transcript with an AI provider.
+    """Run an AI transformation over a transcript.
 
-    Returns ``{"refined": ..., "provider": ..., "model": ..., "chunks": N}``.
-    Raises :class:`RefinementError` on failure (network, missing provider,
-    bad response, etc.).
+    Parameters
+    ----------
+    text : full transcript text (paragraph-formatted is fine).
+    language : BCP-47 code of the source transcript (``"en"``, ``"hi"`` …).
+    mode : ``"refine"`` (default) cleans up punctuation/capitalization while
+        keeping the original language. ``"translate"`` translates the whole
+        text into ``target_language`` instead.
+    target_language : BCP-47 code (``"en"``, ``"hi"`` …). Required when
+        ``mode == "translate"``; ignored otherwise.
+    provider : explicit provider instance, or ``None`` to auto-pick.
+    max_chunk_words : split the input into chunks of at most this many
+        words so the LLM context window isn't blown.
+
+    Returns
+    -------
+    dict with keys ``refined``, ``provider``, ``model``, ``chunks``,
+    ``mode``, ``target_language``.
+
+    Raises
+    ------
+    RefinementError : provider/network failure or invalid arguments.
     """
+    mode = (mode or "refine").lower()
+    target_language = (target_language or "").strip().lower()
+
+    if mode not in ("refine", "translate"):
+        raise RefinementError(
+            f"unknown mode {mode!r}; expected 'refine' or 'translate'"
+        )
+    if mode == "translate" and not target_language:
+        raise RefinementError(
+            "translate mode requires target_language (e.g. 'en' or 'hi')"
+        )
+
     if not text or not text.strip():
-        return {"refined": "", "provider": "", "model": "", "chunks": 0}
+        return {
+            "refined": "",
+            "provider": "",
+            "model": "",
+            "chunks": 0,
+            "mode": mode,
+            "target_language": target_language,
+        }
 
     provider = provider or get_provider()
     chunks = _chunk_text(text, max_chunk_words)
     log.info(
-        "refining %d chunks (%d words total) via %s/%s",
+        "%s %d chunks (%d words total) via %s/%s%s",
+        "translating" if mode == "translate" else "refining",
         len(chunks),
         len(text.split()),
         provider.name,
         provider.model,
+        f" -> {target_language}" if mode == "translate" else "",
     )
 
-    refined_parts: list[str] = []
+    out_parts: list[str] = []
     for i, chunk in enumerate(chunks, 1):
         log.info("  chunk %d/%d (%d words)", i, len(chunks), len(chunk.split()))
-        refined_parts.append(provider.refine_chunk(chunk, language))
+        prompt = _build_prompt(
+            chunk, language, mode=mode, target_language=target_language
+        )
+        out_parts.append(provider.generate(prompt))
 
     return {
-        "refined": "\n\n".join(refined_parts).strip(),
+        "refined": "\n\n".join(out_parts).strip(),
         "provider": provider.name,
         "model": provider.model,
         "chunks": len(chunks),
+        "mode": mode,
+        "target_language": target_language,
     }

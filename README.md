@@ -20,7 +20,7 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
 - [CLI reference](#cli-reference)
 - [Output formats](#output-formats)
 - [The interactive HTML viewer](#the-interactive-html-viewer)
-- [AI Refine](#ai-refine)
+- [AI Refine &amp; Translate](#ai-refine--translate)
 - [Python API](#python-api)
 - [Project layout](#project-layout)
 - [Troubleshooting](#troubleshooting)
@@ -49,11 +49,13 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
   place, a docking floating mini-player, copy/download buttons, and a
   7-way theme switcher (Auto / Dark / Light / Sepia / Midnight /
   Solarized / Forest) saved to localStorage.
-- **AI Refine button** — auto-generated captions are noisy (missing
-  punctuation, run-on sentences, occasional word-recognition errors).
-  One click sends the transcript through a free LLM that adds
-  punctuation, fixes obvious mistakes, and breaks the wall-of-text into
-  proper paragraphs. Toggle between *Original* and *AI Refined* views.
+- **AI Refine &amp; Translate** — one split-button next to *Copy* /
+  *Download* opens a menu with three actions:
+  *Refine (clean up)* fixes punctuation, capitalization, and
+  paragraphing while keeping the source language;
+  *Translate → English* and *Translate → Hindi* (हिन्दी) push the whole
+  transcript through the same LLM for a full natural translation.
+  Toggle between *Original* and the AI output with one click.
   Supports Ollama (local, $0), Groq, Google Gemini, and OpenRouter.
 - **Friendly error messages** for `TranscriptsDisabled`,
   `VideoUnavailable`, `IpBlocked`, `NoTranscriptFound`, etc.
@@ -215,18 +217,28 @@ YouTube player itself needs the network.
 
 ---
 
-## AI Refine
+## AI Refine &amp; Translate
 
 YouTube's auto-generated captions are noisy — missing punctuation,
 run-on sentences, lowercase everywhere, occasional word-recognition
-errors. The viewer has a **Refine with AI** button (next to *Copy* and
-*Download*) that sends the transcript through a free LLM and shows you
-a cleaned-up version. Switching back is one click on the
-*Original ⇄ AI Refined* toggle.
+errors. The viewer has an **AI: Refine or Translate** split-button
+(next to *Copy* and *Download*). The dropdown gives you three actions
+that all go through the same free LLM:
 
-**Available only when running via `python cli.py --serve`** (the
+| menu item                       | what it does                                                                            |
+| ------------------------------- | --------------------------------------------------------------------------------------- |
+| **Refine (clean up)**           | adds punctuation, capitalization, paragraphs · **keeps the original language**          |
+| **Translate → English**         | full natural translation of the whole transcript into English                           |
+| **Translate → हिन्दी (Hindi)**  | full natural translation into Hindi (Devanagari script)                                 |
+
+After the LLM is done, an *Original ⇄ AI Output* pill toggle appears so
+you can flip between the source and the AI result. The label updates to
+match the action you picked (e.g. *Original | English* after a
+translation).
+
+**Available only when running via `python cli.py --serve`** — the
 button is disabled on offline `file://` pages because there's no server
-to call).
+to call.
 
 ### Supported providers (all free)
 
@@ -249,15 +261,24 @@ download (full privacy, no rate limits, completely offline once
 installed). **Groq** if you want zero local setup and the fastest
 response.
 
-### What it does (and doesn't)
+### What each mode does (and doesn't)
 
-The prompt asks the model to:
+**Refine** asks the model to:
 
 - add proper punctuation and capitalization
 - fix obvious word-recognition errors using context
 - break the text into readable paragraphs
 - **preserve the speaker's original words, meaning, and language**
 - *not* summarise, translate, or add commentary
+
+**Translate** asks the model to:
+
+- translate the **full** text into the target language (no
+  summarising, no omissions)
+- use natural, fluent wording — not literal word-for-word
+- add punctuation and break into readable paragraphs
+- preserve the speaker's meaning, tone, and technical terms
+- leave any portion that's already in the target language untouched
 
 Long transcripts are split into ~1200-word chunks so they fit in the
 context window — chunks are processed sequentially, server-side, and
@@ -268,16 +289,28 @@ stitched back together.
 ```python
 from ai_refine import refine
 
-result = refine(
-    "raw transcript text...",
-    language="en",
-    max_chunk_words=1200,
+# clean-up (default mode)
+cleaned = refine("raw transcript text...", language="en")
+print(cleaned["refined"])          # cleaned text
+print(cleaned["provider"])         # e.g. "ollama"
+print(cleaned["model"])            # e.g. "llama3.2:latest"
+print(cleaned["chunks"])           # number of pieces sent to the LLM
+
+# translation
+translated = refine(
+    "नमस्ते दोस्तों आज हम बात करेंगे...",
+    language="hi",
+    mode="translate",
+    target_language="en",
 )
-print(result["refined"])          # cleaned text
-print(result["provider"])         # e.g. "ollama"
-print(result["model"])            # e.g. "llama3.2:latest"
-print(result["chunks"])           # number of pieces sent to the LLM
+print(translated["refined"])          # full English translation
+print(translated["mode"])             # "translate"
+print(translated["target_language"])  # "en"
 ```
+
+`target_language` accepts BCP-47 codes — `"en"`, `"hi"`, `"es"`,
+`"fr"`, `"de"`, `"ja"`, `"zh"`, etc. The first-class ones in the web
+UI dropdown are English and Hindi; the API accepts any code.
 
 ### HTTP API
 
@@ -285,7 +318,25 @@ print(result["chunks"])           # number of pieces sent to the LLM
 POST /api/refine
 Content-Type: application/json
 
-{"text": "raw transcript here...", "language": "en"}
+{
+  "text": "raw transcript here...",
+  "language": "en",
+  "mode": "refine"
+}
+```
+
+To translate instead, pass `mode` + `target_language`:
+
+```http
+POST /api/refine
+Content-Type: application/json
+
+{
+  "text": "hello today we will talk about...",
+  "language": "en",
+  "mode": "translate",
+  "target_language": "hi"
+}
 ```
 
 Returns:
@@ -295,12 +346,18 @@ Returns:
   "refined":  "...",
   "provider": "ollama",
   "model":    "llama3.2:latest",
-  "chunks":   3
+  "chunks":   3,
+  "mode":     "translate",
+  "target_language": "hi"
 }
 ```
 
-Errors come back as `{"error": "..."}` with status `400` (bad request),
-`503` (no provider configured / provider failed), or `500` (unexpected).
+`mode` defaults to `"refine"`. `target_language` is required when
+`mode == "translate"` and ignored otherwise.
+
+Errors come back as `{"error": "..."}` with status `400` (bad
+request — e.g. missing `target_language`, invalid `mode`), `503` (no
+provider configured / provider failed), or `500` (unexpected).
 
 ---
 
@@ -394,17 +451,24 @@ Some very long videos take a while because YouTube returns a large
 transcript blob. Use `--quiet` to skip the metadata header and stream
 the body straight to a file: `python cli.py <id> -q -o out.txt`.
 
-**AI Refine returns *"No AI provider is configured"***
+**AI dropdown returns *"No AI provider is configured"***
 Pick one (any is free):
 
 - **Easiest, fully local:** install Ollama
   (`curl -fsSL https://ollama.com/install.sh | sh`), pull a model
   (`ollama pull llama3.2`), make sure it's running (`ollama serve`),
-  then click *Refine with AI* again — the server auto-detects it.
+  then click the AI button again — the server auto-detects it.
 - **Easiest, no local install:** sign up for free at
   [console.groq.com/keys](https://console.groq.com/keys), then run the
   server with `GROQ_API_KEY=... python cli.py --serve`.
-- See [AI Refine](#ai-refine) for all four options.
+- See [AI Refine &amp; Translate](#ai-refine--translate) for all four options.
+
+**Translation output mixes English with the target language**
+This usually means the model is too small — `llama3.2:3b` and other
+3B-class models occasionally fall back to English mid-paragraph for
+Hindi/Indic targets. Use a larger model
+(`YT_TRANS_OLLAMA_MODEL=llama3.1:8b`, or any of the cloud providers)
+for cleaner translations.
 
 **AI Refine returns *"Ollama HTTP 404: model not found"***
 Your Ollama is running but doesn't have the model the picker chose.
@@ -412,12 +476,13 @@ Either `ollama pull <name>` it, or set `YT_TRANS_OLLAMA_MODEL` to one
 you have (e.g. `export YT_TRANS_OLLAMA_MODEL=mistral`). Run
 `curl -s http://localhost:11434/api/tags` to list what's installed.
 
-**AI Refine takes forever on long videos**
+**AI Refine/Translate takes forever on long videos**
 LLM inference is sequential per chunk. A 30-minute video chunked into
 ~5 pieces typically takes 30–60 s on Groq/Gemini and 1–3 min on a
 local 3B Ollama model. Use a smaller/faster model
 (`YT_TRANS_OLLAMA_MODEL=llama3.2:3b`) or one of the cloud providers
-for speed.
+for speed. Translation is a touch slower than Refine because the
+model has to generate more tokens.
 
 **Generic warning: undocumented YouTube endpoint**
 `youtube-transcript-api` calls an undocumented part of the YouTube web
@@ -443,7 +508,9 @@ Areas that would be especially welcome:
 
 - Summarisation / Q&A over the transcript (LLM-backed)
 - Chapter detection
-- Translation pipeline (beyond YouTube's auto-translate)
+- More first-class translation targets in the dropdown (the API
+  already accepts any BCP-47 code; only English &amp; Hindi are
+  surfaced in the menu today)
 - A `POST /api/transcript` JSON endpoint for programmatic clients
 - Docker image / GitHub Action
 
