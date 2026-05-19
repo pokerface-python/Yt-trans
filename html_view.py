@@ -817,8 +817,11 @@ _TEMPLATE = """<!doctype html>
   async function runAI(mode, target) {{
     setMenuOpen(false);
     aiError.style.display = 'none';
-    aiBtn.disabled = true;
-    const origLabel = aiBtn.textContent;
+    // Whichever button kicked this off shows the running text; the rest
+    // just get disabled so the user can't double-fire while waiting.
+    const actingBtn = (mode === 'summarize') ? summarizeBtn : aiBtn;
+    const origActingLabel = actingBtn.textContent;
+    aiControls.forEach(b => {{ b.disabled = true; }});
     let verb;
     if (mode === 'translate') {{
       verb = 'Translating to ' + (TARGET_LABELS[target] || target) + '…';
@@ -827,7 +830,7 @@ _TEMPLATE = """<!doctype html>
     }} else {{
       verb = 'Refining…';
     }}
-    aiBtn.textContent = verb + ' (this can take a minute)';
+    actingBtn.textContent = verb + ' (this can take a minute)';
     setAiStatus('running', verb);
     try {{
       const resp = await fetch('/api/refine', {{
@@ -847,8 +850,10 @@ _TEMPLATE = """<!doctype html>
         : renderParagraphs(aiOutputText);
       paraView.innerHTML = aiOutputHTML;
 
+      // Hide BOTH primary AI controls — the toggle below takes over.
       const aiBtnWrap = aiBtn.closest('.ai-menu-wrap');
       if (aiBtnWrap) aiBtnWrap.style.display = 'none';
+      summarizeBtn.style.display = 'none';
 
       let outLabel;
       if (mode === 'translate') {{
@@ -885,8 +890,8 @@ _TEMPLATE = """<!doctype html>
       document.querySelector('.tabs button[data-target="paragraph-view"]').click();
     }} catch (e) {{
       showAIError(e.message || String(e));
-      aiBtn.textContent = origLabel;
-      aiBtn.disabled = false;
+      actingBtn.textContent = origActingLabel;
+      aiControls.forEach(b => {{ b.disabled = false; }});
       // If a previous AI run succeeded, restore that label; otherwise hide.
       if (lastAILabel != null) {{
         const showing = aiToggle.querySelector('button.active')?.dataset.view;
@@ -899,6 +904,8 @@ _TEMPLATE = """<!doctype html>
       }}
     }}
   }}
+
+  summarizeBtn.addEventListener('click', () => runAI('summarize', ''));
 
   aiMenu.querySelectorAll('button[data-mode]').forEach(item => {{
     item.addEventListener('click', () => {{
