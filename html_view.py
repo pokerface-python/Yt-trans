@@ -89,6 +89,54 @@ _SHARED_CSS = """
     display: flex; align-items: center; justify-content: flex-end; gap: 8px;
     min-height: 40px; backdrop-filter: blur(8px); }
 
+  /* AI status pill, sits at the top-left of the sticky header so users
+     can see live progress no matter how far they've scrolled. */
+  .ai-status { display: none; margin-right: auto;
+    align-items: center; gap: 8px;
+    padding: 5px 12px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--border);
+    font-size: 12px; color: var(--text); font-weight: 500;
+    cursor: default; user-select: none;
+    max-width: min(60vw, 380px);
+    transition: background .2s ease, border-color .2s ease,
+                color .2s ease, transform .12s ease; }
+  .ai-status.visible { display: inline-flex; }
+  .ai-status.clickable { cursor: pointer; }
+  .ai-status.clickable:hover { background: var(--hover);
+    transform: translateY(-1px); }
+  .ai-status .ai-label { overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; flex: 1 1 auto; min-width: 0; }
+  .ai-status .ai-dot { flex: 0 0 8px; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--accent);
+    box-shadow: 0 0 0 3px
+      color-mix(in srgb, var(--accent) 25%, transparent); }
+  .ai-status .ai-spinner { display: none; flex: 0 0 13px;
+    width: 13px; height: 13px;
+    border: 2px solid color-mix(in srgb, var(--accent) 22%, transparent);
+    border-top-color: var(--accent); border-radius: 50%;
+    animation: ai-spin .7s linear infinite; }
+  /* running: spinner replaces dot, accent-tinted background, animated */
+  .ai-status.running { border-color: var(--accent); cursor: progress;
+    background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+    color: var(--text); animation: ai-pulse-bg 1.6s ease-in-out infinite; }
+  .ai-status.running .ai-spinner { display: inline-block; }
+  .ai-status.running .ai-dot { display: none; }
+  /* updated: AI output is being shown — strong accent border */
+  .ai-status.updated { border-color: var(--accent); color: var(--text); }
+  /* original: AI output exists but user toggled back to the source */
+  .ai-status.original { color: var(--muted); }
+  .ai-status.original .ai-dot { background: var(--muted);
+    box-shadow: none; }
+  @keyframes ai-spin { to { transform: rotate(360deg); } }
+  @keyframes ai-pulse-bg {
+    0%, 100% { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+    50%      { background: color-mix(in srgb, var(--accent) 22%, var(--panel)); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ai-status, .ai-status .ai-spinner { animation: none !important; }
+    .ai-status.clickable:hover { transform: none; }
+  }
+
   .theme-switch { display: inline-flex; align-items: center; gap: 6px; }
   .theme-swatch { width: 22px; height: 22px; border-radius: 50%;
     border: 2px solid transparent; cursor: pointer; padding: 0;
@@ -328,6 +376,12 @@ _TEMPLATE = """<!doctype html>
 </head>
 <body>
 <header>
+  <div class="ai-status" id="ai-status" role="status" aria-live="polite"
+       title="Click to switch between original and AI output">
+    <span class="ai-spinner" aria-hidden="true"></span>
+    <span class="ai-dot" aria-hidden="true"></span>
+    <span class="ai-label">Idle</span>
+  </div>
   <div class="theme-switch" role="radiogroup" aria-label="Theme">
     <button type="button" class="theme-swatch" data-theme="auto"      title="Auto"      aria-label="Auto theme"></button>
     <button type="button" class="theme-swatch" data-theme="dark"      title="Dark"      aria-label="Dark theme"></button>
@@ -377,6 +431,10 @@ _TEMPLATE = """<!doctype html>
       <a href="{url}" target="_blank" rel="noopener">Open on YouTube ↗</a>
       <button id="copy-btn">Copy full text</button>
       <a id="download-btn" download="{download_name}">Download .txt</a>
+      <button id="summarize-btn" class="primary" type="button"
+        title="Get a TL;DR + bullet-point key notes (powered by AI)">
+        Summarize
+      </button>
       <div class="ai-menu-wrap">
         <button id="ai-btn" class="primary" type="button"
           aria-haspopup="true" aria-expanded="false"
@@ -388,11 +446,6 @@ _TEMPLATE = """<!doctype html>
             data-mode="refine" data-target="">
             <span class="label">Refine (clean up)</span>
             <span class="hint">Punctuation, paragraphs · keep source language</span>
-          </button>
-          <button type="button" role="menuitem"
-            data-mode="summarize" data-target="">
-            <span class="label">Summarize (key points)</span>
-            <span class="hint">TL;DR + 5–12 bullet points in the source language</span>
           </button>
           <button type="button" role="menuitem"
             data-mode="translate" data-target="en">
@@ -608,27 +661,83 @@ _TEMPLATE = """<!doctype html>
     btn.textContent = 'Fetching…'; btn.disabled = true;
   }});
 
-  // ----- AI refine / translate --------------------------------------------
+  // ----- AI refine / translate / summarize -------------------------------
   const LANG = {language_code_json};
-  const aiBtn      = document.getElementById('ai-btn');
-  const aiMenu     = document.getElementById('ai-menu');
-  const aiToggle   = document.getElementById('ai-toggle');
-  const aiMeta     = document.getElementById('ai-meta');
-  const aiError    = document.getElementById('ai-error');
-  const paraView   = document.getElementById('paragraph-view');
+  const aiBtn        = document.getElementById('ai-btn');
+  const summarizeBtn = document.getElementById('summarize-btn');
+  const aiMenu       = document.getElementById('ai-menu');
+  const aiToggle     = document.getElementById('ai-toggle');
+  const aiMeta       = document.getElementById('ai-meta');
+  const aiError      = document.getElementById('ai-error');
+  const aiStatus     = document.getElementById('ai-status');
+  const aiStatusLabel = aiStatus.querySelector('.ai-label');
+  const paraView     = document.getElementById('paragraph-view');
   const originalHTML = paraView.innerHTML;
+  const BASE_TITLE   = document.title;
+  // Every top-level AI control — disabled together while one is running,
+  // hidden together once any AI run succeeds (toggle takes over).
+  const aiControls = [aiBtn, summarizeBtn];
   let aiOutputHTML = null;
   let aiOutputText = null;
+  // What we'd call the AI output ("Summary", "AI Refined", "English"…)
+  // so the header pill can show "Viewing: <thing>" after a successful run.
+  let lastAILabel = null;
 
   const TARGET_LABELS = {{
     en: 'English',
     hi: 'हिन्दी',
   }};
 
+  // Update the sticky header pill + tab title. `state` is one of:
+  //   'hidden'   — no AI activity yet (pill not shown)
+  //   'running'  — spinner + accent background, AI call in flight
+  //   'updated'  — clickable badge, currently showing AI output
+  //   'original' — clickable badge, viewer flipped back to source
+  function setAiStatus(state, label) {{
+    aiStatus.classList.remove(
+      'visible', 'running', 'updated', 'original', 'clickable'
+    );
+    if (state === 'hidden') {{
+      aiStatus.removeAttribute('aria-busy');
+      document.title = BASE_TITLE;
+      return;
+    }}
+    aiStatus.classList.add('visible');
+    aiStatusLabel.textContent = label;
+    if (state === 'running') {{
+      aiStatus.classList.add('running');
+      aiStatus.setAttribute('aria-busy', 'true');
+      document.title = '⏳ ' + label + ' · ' + BASE_TITLE;
+    }} else if (state === 'updated') {{
+      aiStatus.classList.add('updated', 'clickable');
+      aiStatus.removeAttribute('aria-busy');
+      document.title = BASE_TITLE;
+    }} else if (state === 'original') {{
+      aiStatus.classList.add('original', 'clickable');
+      aiStatus.removeAttribute('aria-busy');
+      document.title = BASE_TITLE;
+    }}
+  }}
+
+  // Click the pill -> flip between Original and the AI output, reusing
+  // the existing actions-bar toggle so both stay in sync.
+  aiStatus.addEventListener('click', () => {{
+    if (!aiStatus.classList.contains('clickable')) return;
+    const activeView = aiToggle.querySelector('button.active')?.dataset.view;
+    const target = activeView === 'refined' ? 'original' : 'refined';
+    const btn = aiToggle.querySelector(
+      'button[data-view="' + target + '"]'
+    );
+    if (btn) btn.click();
+  }});
+
   if (window.location.protocol === 'file:') {{
     aiBtn.disabled = true;
     aiBtn.title = 'AI only works when served. Run: python cli.py --serve';
     aiBtn.textContent = 'AI (server only)';
+    summarizeBtn.disabled = true;
+    summarizeBtn.title = aiBtn.title;
+    summarizeBtn.textContent = 'Summarize (server only)';
   }}
 
   function escapeHTML(s) {{
@@ -719,6 +828,7 @@ _TEMPLATE = """<!doctype html>
       verb = 'Refining…';
     }}
     aiBtn.textContent = verb + ' (this can take a minute)';
+    setAiStatus('running', verb);
     try {{
       const resp = await fetch('/api/refine', {{
         method: 'POST',
@@ -748,6 +858,7 @@ _TEMPLATE = """<!doctype html>
       }} else {{
         outLabel = 'AI Refined';
       }}
+      lastAILabel = outLabel;
       const outBtn = aiToggle.querySelector('button[data-view="refined"]');
       outBtn.textContent = outLabel;
 
@@ -769,11 +880,23 @@ _TEMPLATE = """<!doctype html>
         + (data.model ? ' (' + data.model + ')' : '');
       aiMeta.style.display = 'inline';
 
+      setAiStatus('updated', 'Viewing: ' + outLabel);
+
       document.querySelector('.tabs button[data-target="paragraph-view"]').click();
     }} catch (e) {{
       showAIError(e.message || String(e));
       aiBtn.textContent = origLabel;
       aiBtn.disabled = false;
+      // If a previous AI run succeeded, restore that label; otherwise hide.
+      if (lastAILabel != null) {{
+        const showing = aiToggle.querySelector('button.active')?.dataset.view;
+        setAiStatus(
+          showing === 'refined' ? 'updated' : 'original',
+          'Viewing: ' + (showing === 'refined' ? lastAILabel : 'Original')
+        );
+      }} else {{
+        setAiStatus('hidden');
+      }}
     }}
   }}
 
@@ -788,8 +911,16 @@ _TEMPLATE = """<!doctype html>
       if (btn.classList.contains('active')) return;
       aiToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      paraView.innerHTML = btn.dataset.view === 'refined' ? aiOutputHTML : originalHTML;
+      const showingAI = btn.dataset.view === 'refined';
+      paraView.innerHTML = showingAI ? aiOutputHTML : originalHTML;
       document.querySelector('.tabs button[data-target="paragraph-view"]').click();
+      // Keep the sticky header pill in lock-step with this toggle.
+      if (lastAILabel != null) {{
+        setAiStatus(
+          showingAI ? 'updated' : 'original',
+          'Viewing: ' + (showingAI ? lastAILabel : 'Original')
+        );
+      }}
     }});
   }});
 </script>
