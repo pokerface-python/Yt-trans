@@ -5,12 +5,13 @@ Endpoints:
     GET  /                       -> landing page with a URL input bar
     GET  /?url=<url>&lang=en,hi  -> fetches the transcript and renders
                                     the full interactive HTML view
-    POST /api/refine             -> AI clean-up / translation, JSON body:
+    POST /api/refine             -> AI clean-up / translation / summary,
+                                    JSON body:
         {
           "text":     "<full transcript>",
-          "language": "en",                 # source BCP-47 (optional)
-          "mode":     "refine" | "translate",
-          "target_language": "en"|"hi"|...  # required if mode=translate
+          "language": "en",                         # source BCP-47 (optional)
+          "mode":     "refine"|"translate"|"summarize",
+          "target_language": "en"|"hi"|...          # required if mode=translate
         }
 
 No external dependencies — just `http.server` from the standard library.
@@ -98,10 +99,10 @@ def _build_handler(default_langs: Sequence[str]):
             if not text:
                 self._send_json({"error": "field 'text' is required"}, status=400)
                 return
-            if mode not in ("refine", "translate"):
+            if mode not in ("refine", "translate", "summarize"):
                 self._send_json(
                     {"error": f"invalid mode {mode!r}; "
-                              "expected 'refine' or 'translate'"},
+                              "expected 'refine', 'translate', or 'summarize'"},
                     status=400,
                 )
                 return

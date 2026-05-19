@@ -20,7 +20,7 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
 - [CLI reference](#cli-reference)
 - [Output formats](#output-formats)
 - [The interactive HTML viewer](#the-interactive-html-viewer)
-- [AI Refine &amp; Translate](#ai-refine--translate)
+- [AI Refine, Summarize &amp; Translate](#ai-refine-summarize--translate)
 - [Python API](#python-api)
 - [Project layout](#project-layout)
 - [Troubleshooting](#troubleshooting)
@@ -49,10 +49,12 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
   place, a docking floating mini-player, copy/download buttons, and a
   7-way theme switcher (Auto / Dark / Light / Sepia / Midnight /
   Solarized / Forest) saved to localStorage.
-- **AI Refine &amp; Translate** — one split-button next to *Copy* /
-  *Download* opens a menu with three actions:
-  *Refine (clean up)* fixes punctuation, capitalization, and
-  paragraphing while keeping the source language;
+- **AI Refine, Summarize &amp; Translate** — one split-button next to
+  *Copy* / *Download* opens a menu with four actions:
+  *Refine (clean up)* fixes punctuation/paragraphing while keeping the
+  source language;
+  *Summarize (key points)* gives a one-line **TL;DR** plus 5–12 bullet
+  key notes (map-reduce for long videos);
   *Translate → English* and *Translate → Hindi* (हिन्दी) push the whole
   transcript through the same LLM for a full natural translation.
   Toggle between *Original* and the AI output with one click.
@@ -217,24 +219,29 @@ YouTube player itself needs the network.
 
 ---
 
-## AI Refine &amp; Translate
+## AI Refine, Summarize &amp; Translate
 
 YouTube's auto-generated captions are noisy — missing punctuation,
 run-on sentences, lowercase everywhere, occasional word-recognition
 errors. The viewer has an **AI: Refine or Translate** split-button
-(next to *Copy* and *Download*). The dropdown gives you three actions
+(next to *Copy* and *Download*). The dropdown gives you four actions
 that all go through the same free LLM:
 
 | menu item                       | what it does                                                                            |
 | ------------------------------- | --------------------------------------------------------------------------------------- |
 | **Refine (clean up)**           | adds punctuation, capitalization, paragraphs · **keeps the original language**          |
+| **Summarize (key points)**      | one-line `**TL;DR**` + 5–12 bullet key notes · uses map-reduce for long videos          |
 | **Translate → English**         | full natural translation of the whole transcript into English                           |
 | **Translate → हिन्दी (Hindi)**  | full natural translation into Hindi (Devanagari script)                                 |
 
 After the LLM is done, an *Original ⇄ AI Output* pill toggle appears so
 you can flip between the source and the AI result. The label updates to
-match the action you picked (e.g. *Original | English* after a
-translation).
+match the action you picked (e.g. *Original | Summary* after summarising,
+or *Original | English* after translating).
+
+Summary output is rendered nicely — the TL;DR line gets a coloured
+accent badge, bullets become a themed list with the accent colour as
+the marker.
 
 **Available only when running via `python cli.py --serve`** — the
 button is disabled on offline `file://` pages because there's no server
@@ -280,9 +287,24 @@ response.
 - preserve the speaker's meaning, tone, and technical terms
 - leave any portion that's already in the target language untouched
 
-Long transcripts are split into ~1200-word chunks so they fit in the
-context window — chunks are processed sequentially, server-side, and
-stitched back together.
+**Summarize** asks the model to:
+
+- output a single `**TL;DR:**` line (≤ 25 words)
+- then 5–12 Markdown bullet points (`- …`) following the
+  chronological/logical flow of the video
+- capture: main topic, key arguments, examples, numbers/statistics,
+  conclusions, action items
+- skip filler, repetition, greetings, self-promotion
+- keep the SAME language as the source (so a Hindi video gets a Hindi
+  summary; combine with *Translate* afterwards if you want a summary
+  in a different language)
+- for long transcripts the summariser uses **map-reduce**: each
+  ~4000-word chunk is summarised into bullets, then a final pass
+  synthesises those into one coherent TL;DR + bullet list
+
+Long transcripts (in Refine/Translate modes) are split into
+~1200-word chunks so they fit in the context window — chunks are
+processed sequentially, server-side, and stitched back together.
 
 ### Programmatic use
 
@@ -295,6 +317,16 @@ print(cleaned["refined"])          # cleaned text
 print(cleaned["provider"])         # e.g. "ollama"
 print(cleaned["model"])            # e.g. "llama3.2:latest"
 print(cleaned["chunks"])           # number of pieces sent to the LLM
+
+# summary (TL;DR + bullets)
+summary = refine(
+    "raw transcript text...",
+    language="en",
+    mode="summarize",
+)
+print(summary["refined"])          # Markdown: **TL;DR:** ... \n- ... \n- ...
+print(summary["mode"])             # "summarize"
+print(summary["chunks"])           # 1 for short videos; >1 means map-reduce
 
 # translation
 translated = refine(
@@ -339,24 +371,40 @@ Content-Type: application/json
 }
 ```
 
+To summarize:
+
+```http
+POST /api/refine
+Content-Type: application/json
+
+{
+  "text": "hello today we will talk about...",
+  "language": "en",
+  "mode": "summarize"
+}
+```
+
 Returns:
 
 ```json
 {
-  "refined":  "...",
+  "refined":  "**TL;DR:** ...\n\n- point one\n- point two\n- ...",
   "provider": "ollama",
   "model":    "llama3.2:latest",
   "chunks":   3,
-  "mode":     "translate",
-  "target_language": "hi"
+  "mode":     "summarize",
+  "target_language": ""
 }
 ```
 
+The `refined` field is reused across all modes — for summaries it
+holds Markdown (a `**TL;DR:**` line followed by `- ` bullets).
+
 `mode` defaults to `"refine"`. `target_language` is required when
-`mode == "translate"` and ignored otherwise.
+`mode == "translate"` and ignored for the other modes.
 
 Errors come back as `{"error": "..."}` with status `400` (bad
-request — e.g. missing `target_language`, invalid `mode`), `503` (no
+request — e.g. unknown `mode`, missing `target_language`), `503` (no
 provider configured / provider failed), or `500` (unexpected).
 
 ---
@@ -461,7 +509,7 @@ Pick one (any is free):
 - **Easiest, no local install:** sign up for free at
   [console.groq.com/keys](https://console.groq.com/keys), then run the
   server with `GROQ_API_KEY=... python cli.py --serve`.
-- See [AI Refine &amp; Translate](#ai-refine--translate) for all four options.
+- See [AI Refine, Summarize &amp; Translate](#ai-refine-summarize--translate) for all four provider options.
 
 **Translation output mixes English with the target language**
 This usually means the model is too small — `llama3.2:3b` and other
@@ -476,13 +524,23 @@ Either `ollama pull <name>` it, or set `YT_TRANS_OLLAMA_MODEL` to one
 you have (e.g. `export YT_TRANS_OLLAMA_MODEL=mistral`). Run
 `curl -s http://localhost:11434/api/tags` to list what's installed.
 
-**AI Refine/Translate takes forever on long videos**
+**AI Refine/Translate/Summarize takes forever on long videos**
 LLM inference is sequential per chunk. A 30-minute video chunked into
 ~5 pieces typically takes 30–60 s on Groq/Gemini and 1–3 min on a
 local 3B Ollama model. Use a smaller/faster model
 (`YT_TRANS_OLLAMA_MODEL=llama3.2:3b`) or one of the cloud providers
 for speed. Translation is a touch slower than Refine because the
-model has to generate more tokens.
+model has to generate more tokens; Summarize is the slowest on very
+long videos because it does an extra map-reduce combine pass
+(N chunk-summaries + 1 final synthesis call).
+
+**Summary output doesn't start with `**TL;DR:**` or skips bullets**
+Some smaller models don't follow the format instructions strictly.
+Switch to a stronger model
+(`YT_TRANS_OLLAMA_MODEL=llama3.1:8b` or any cloud provider) — the
+viewer's renderer is forgiving (it accepts `**TL;DR**:` and `-`/`*`/`•`
+bullets) but if the model doesn't produce any of those it falls back
+to plain paragraph rendering.
 
 **Generic warning: undocumented YouTube endpoint**
 `youtube-transcript-api` calls an undocumented part of the YouTube web
@@ -506,11 +564,13 @@ kill %1
 
 Areas that would be especially welcome:
 
-- Summarisation / Q&A over the transcript (LLM-backed)
-- Chapter detection
+- Q&amp;A over the transcript (LLM-backed, "ask the video a question")
+- Chapter / topic detection (auto-split into sections)
 - More first-class translation targets in the dropdown (the API
   already accepts any BCP-47 code; only English &amp; Hindi are
   surfaced in the menu today)
+- "Translated summary" combo action (summarize → translate the
+  summary into a chosen target language)
 - A `POST /api/transcript` JSON endpoint for programmatic clients
 - Docker image / GitHub Action
 

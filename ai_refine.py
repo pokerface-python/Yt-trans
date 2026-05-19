@@ -1,6 +1,6 @@
-"""AI-powered transcript refinement and translation.
+"""AI-powered transcript refinement, translation, and summarisation.
 
-Two modes are supported through the single :func:`refine` entry point:
+Three modes are supported through the single :func:`refine` entry point:
 
 * ``mode="refine"`` (default) — clean up an auto-generated transcript:
     * add proper punctuation and capitalization
@@ -11,6 +11,12 @@ Two modes are supported through the single :func:`refine` entry point:
 * ``mode="translate"`` — translate the whole transcript into
   ``target_language`` (``"en"`` and ``"hi"`` are first-class but any
   language name works) using the same provider.
+
+* ``mode="summarize"`` — produce a one-line ``**TL;DR:**`` plus 5–12
+  bullet-point key notes in the source language. For long transcripts
+  the summariser uses map-reduce (per-chunk bullets, then a combine
+  pass) so the final output stays coherent rather than reading like a
+  pile of disjoint mini-summaries.
 
 Supports four LLM providers, picked automatically based on what is
 configured. Priority order (highest first):
@@ -383,6 +389,80 @@ _TRANSLATE_PROMPT_TEMPLATE = (
 )
 
 
+# Full-pass summary (used when the transcript fits in one chunk).
+_SUMMARY_PROMPT_TEMPLATE = (
+    "You are an expert note-taker. The text below is a YouTube transcript "
+    "in {language}. Produce a concise, well-structured summary in "
+    "{language} formatted as KEY POINTS.\n"
+    "\n"
+    "Rules:\n"
+    "1. Start with ONE line beginning exactly with '**TL;DR:** ' — a "
+    "single-sentence summary of at most 25 words. Leave a blank line "
+    "after it.\n"
+    "2. Then 5–12 Markdown bullet points (each line starts with '- '), "
+    "one specific fact/idea per bullet. Short and concrete.\n"
+    "3. Follow the chronological/logical flow of the video.\n"
+    "4. Capture: main topic, key arguments, examples, "
+    "numbers/statistics, conclusions, action items.\n"
+    "5. Skip filler, repetition, greetings, and self-promotion.\n"
+    "6. Use the SAME language as the source: {language}.\n"
+    "7. Return ONLY the TL;DR line and bullets. No preamble, no closing "
+    "remarks, no 'Here is the summary:' line.\n"
+    "\n"
+    "Transcript:\n"
+    '"""\n'
+    "{text}\n"
+    '"""\n'
+)
+
+# Per-chunk pass for very long transcripts. Output is a flat bullet list
+# with NO TL;DR — the combine step adds the final TL;DR.
+_SUMMARY_CHUNK_PROMPT_TEMPLATE = (
+    "You are an expert note-taker. The text below is ONE SEGMENT of a "
+    "longer YouTube transcript in {language}. Extract the key points "
+    "from THIS SEGMENT ONLY.\n"
+    "\n"
+    "Rules:\n"
+    "1. 3–8 Markdown bullet points (each line starts with '- ').\n"
+    "2. One specific fact/idea per bullet.\n"
+    "3. Use the SAME language as the source: {language}.\n"
+    "4. Do NOT add a TL;DR — only bullets.\n"
+    "5. Return ONLY the bullets. No preamble, no closing remarks.\n"
+    "\n"
+    "Segment:\n"
+    '"""\n'
+    "{text}\n"
+    '"""\n'
+)
+
+# Reduce step: merge per-chunk bullet lists into one coherent summary
+# with a TL;DR.
+_SUMMARY_COMBINE_PROMPT_TEMPLATE = (
+    "You are an expert note-taker. Below are bullet-point key notes "
+    "extracted from consecutive segments of a YouTube transcript in "
+    "{language}. Synthesize them into ONE coherent summary in "
+    "{language}.\n"
+    "\n"
+    "Rules:\n"
+    "1. Start with ONE line beginning exactly with '**TL;DR:** ' — a "
+    "single-sentence summary of at most 25 words. Leave a blank line "
+    "after it.\n"
+    "2. Then 5–12 Markdown bullet points (each line starts with '- '), "
+    "ordered to follow the original video.\n"
+    "3. Deduplicate overlapping points; merge related ideas.\n"
+    "4. Drop trivial bullets; keep what a viewer would actually want "
+    "to remember.\n"
+    "5. Use the SAME language as the source: {language}.\n"
+    "6. Return ONLY the TL;DR line and bullets. No preamble, no closing "
+    "remarks.\n"
+    "\n"
+    "Segment notes:\n"
+    '"""\n'
+    "{text}\n"
+    '"""\n'
+)
+
+
 # BCP-47 codes -> human-friendly names used in prompts and UI labels.
 _LANGUAGE_NAMES = {
     "en": "English",
@@ -424,13 +504,32 @@ def _build_prompt(
     *,
     mode: str = "refine",
     target_language: str = "",
+    summary_role: str = "single",
 ) -> str:
+    """Build the LLM prompt for the requested mode.
+
+    ``summary_role`` is only meaningful when ``mode == "summarize"``:
+        * ``"single"``  -> full summary with TL;DR + bullets
+        * ``"chunk"``   -> per-segment bullets (no TL;DR), used in the
+                           map step of map-reduce
+        * ``"combine"`` -> reduce step: merge per-chunk bullets into the
+                           final TL;DR + bullets
+    """
+    lang_human = _human_language(language)
     if mode == "translate":
         return _TRANSLATE_PROMPT_TEMPLATE.format(
             text=text,
-            source_language=_human_language(language),
+            source_language=lang_human,
             target_language=_human_language(target_language),
         )
+    if mode == "summarize":
+        if summary_role == "chunk":
+            tpl = _SUMMARY_CHUNK_PROMPT_TEMPLATE
+        elif summary_role == "combine":
+            tpl = _SUMMARY_COMBINE_PROMPT_TEMPLATE
+        else:
+            tpl = _SUMMARY_PROMPT_TEMPLATE
+        return tpl.format(text=text, language=lang_human)
     return _REFINE_PROMPT_TEMPLATE.format(
         text=text, language=language or "unknown"
     )
@@ -501,6 +600,14 @@ def _chunk_text(text: str, max_words: int) -> list[str]:
 # public entry point
 # ---------------------------------------------------------------------------
 
+# Summary mode can use a larger chunk size because the LLM only needs to
+# OUTPUT a few bullet points, not the whole input back. Bigger chunks =
+# fewer round-trips = better global coherence.
+_SUMMARY_CHUNK_WORDS = 4000
+
+_VALID_MODES = ("refine", "translate", "summarize")
+
+
 def refine(
     text: str,
     language: str = "en",
@@ -516,19 +623,26 @@ def refine(
     ----------
     text : full transcript text (paragraph-formatted is fine).
     language : BCP-47 code of the source transcript (``"en"``, ``"hi"`` …).
-    mode : ``"refine"`` (default) cleans up punctuation/capitalization while
-        keeping the original language. ``"translate"`` translates the whole
-        text into ``target_language`` instead.
+    mode : one of
+        * ``"refine"`` (default) — clean up punctuation/capitalization,
+          keep the original language.
+        * ``"translate"`` — translate the full text into
+          ``target_language``.
+        * ``"summarize"`` — produce a TL;DR + 5–12 bullet-point key
+          notes. Long transcripts are summarised via map-reduce so the
+          output stays coherent end-to-end.
     target_language : BCP-47 code (``"en"``, ``"hi"`` …). Required when
         ``mode == "translate"``; ignored otherwise.
     provider : explicit provider instance, or ``None`` to auto-pick.
     max_chunk_words : split the input into chunks of at most this many
-        words so the LLM context window isn't blown.
+        words so the LLM context window isn't blown. ``summarize`` mode
+        uses its own larger chunk size internally.
 
     Returns
     -------
     dict with keys ``refined``, ``provider``, ``model``, ``chunks``,
-    ``mode``, ``target_language``.
+    ``mode``, ``target_language``. (``refined`` holds the AI output for
+    any mode — kept for backwards compatibility.)
 
     Raises
     ------
@@ -537,9 +651,9 @@ def refine(
     mode = (mode or "refine").lower()
     target_language = (target_language or "").strip().lower()
 
-    if mode not in ("refine", "translate"):
+    if mode not in _VALID_MODES:
         raise RefinementError(
-            f"unknown mode {mode!r}; expected 'refine' or 'translate'"
+            f"unknown mode {mode!r}; expected one of {list(_VALID_MODES)}"
         )
     if mode == "translate" and not target_language:
         raise RefinementError(
@@ -557,6 +671,18 @@ def refine(
         }
 
     provider = provider or get_provider()
+
+    if mode == "summarize":
+        output, chunks_used = _run_summarize(text, language, provider)
+        return {
+            "refined": output,
+            "provider": provider.name,
+            "model": provider.model,
+            "chunks": chunks_used,
+            "mode": mode,
+            "target_language": "",
+        }
+
     chunks = _chunk_text(text, max_chunk_words)
     log.info(
         "%s %d chunks (%d words total) via %s/%s%s",
@@ -584,3 +710,46 @@ def refine(
         "mode": mode,
         "target_language": target_language,
     }
+
+
+def _run_summarize(
+    text: str, language: str, provider: _Provider
+) -> tuple[str, int]:
+    """Map-reduce summary. Returns (summary_text, chunk_count).
+
+    Single chunk: one LLM call, full summary.
+    Multiple chunks: per-chunk bullet extraction, then one combine call.
+    """
+    chunks = _chunk_text(text, _SUMMARY_CHUNK_WORDS)
+    n_words = len(text.split())
+    log.info(
+        "summarising %d words in %d chunk(s) via %s/%s",
+        n_words, len(chunks), provider.name, provider.model,
+    )
+
+    if len(chunks) <= 1:
+        prompt = _build_prompt(
+            chunks[0] if chunks else text, language, mode="summarize"
+        )
+        return provider.generate(prompt), max(1, len(chunks))
+
+    log.info("  map: extracting bullets from %d chunks", len(chunks))
+    partials: list[str] = []
+    for i, chunk in enumerate(chunks, 1):
+        log.info(
+            "    chunk %d/%d (%d words)", i, len(chunks), len(chunk.split())
+        )
+        prompt = _build_prompt(
+            chunk, language, mode="summarize", summary_role="chunk"
+        )
+        partials.append(provider.generate(prompt))
+
+    log.info("  reduce: combining %d partial summaries", len(partials))
+    joined = "\n\n".join(
+        f"--- Segment {i + 1} ---\n{p.strip()}"
+        for i, p in enumerate(partials)
+    )
+    combine_prompt = _build_prompt(
+        joined, language, mode="summarize", summary_role="combine"
+    )
+    return provider.generate(combine_prompt), len(chunks)

@@ -13,9 +13,11 @@ The page bundles:
     * a timestamped view where every snippet is a clickable link that seeks
       the embedded player to that exact moment.
     * an "AI: Refine or Translate" split-button that POSTs to /api/refine.
-      The dropdown offers three actions: Refine (clean up, keep language),
-      Translate -> English, Translate -> Hindi. The result is toggleable
-      against the original via a pill switch.
+      The dropdown offers four actions: Refine (clean up, keep language),
+      Summarize (TL;DR + bullet key points), Translate -> English,
+      Translate -> Hindi. The result is toggleable against the original
+      via a pill switch; summaries render with a TL;DR callout and a
+      themed bullet list.
 
 The output is a single .html file with inlined CSS + JS — no external
 assets, works offline (the embedded YouTube player itself is the only
@@ -189,6 +191,20 @@ _SHARED_CSS = """
 
   #paragraph-view { font-size: 18px; line-height: 1.85; }
   #paragraph-view p { margin: 0 0 20px; }
+  #paragraph-view ul { margin: 0 0 20px; padding-left: 1.25em; font-size: 17px; }
+  #paragraph-view li { margin: 0 0 10px; line-height: 1.65; }
+  #paragraph-view li::marker { color: var(--accent); }
+  #paragraph-view .tldr { display: block; margin: 0 0 18px;
+    padding: 14px 18px; border-radius: 10px;
+    border-left: 4px solid var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+    color: var(--text); font-size: 17px; line-height: 1.55;
+    font-weight: 500; }
+  #paragraph-view .tldr-label { display: inline-block;
+    font-size: 11px; font-weight: 700; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--accent);
+    margin-right: 10px; vertical-align: 1px; }
+  #paragraph-view strong { color: var(--text); font-weight: 600; }
 
   .snippet { display: flex; gap: 14px; align-items: baseline;
     padding: 8px 12px; border-radius: 6px; cursor: pointer;
@@ -372,6 +388,11 @@ _TEMPLATE = """<!doctype html>
             data-mode="refine" data-target="">
             <span class="label">Refine (clean up)</span>
             <span class="hint">Punctuation, paragraphs · keep source language</span>
+          </button>
+          <button type="button" role="menuitem"
+            data-mode="summarize" data-target="">
+            <span class="label">Summarize (key points)</span>
+            <span class="hint">TL;DR + 5–12 bullet points in the source language</span>
           </button>
           <button type="button" role="menuitem"
             data-mode="translate" data-target="en">
@@ -616,9 +637,46 @@ _TEMPLATE = """<!doctype html>
     }}[c]));
   }}
 
+  // Render Markdown-ish inline: escape, then convert **bold**.
+  function renderInline(s) {{
+    return escapeHTML(s).replace(/\\*\\*(.+?)\\*\\*/g,
+      '<strong>$1</strong>');
+  }}
+
   function renderParagraphs(text) {{
     return text.split(/\\n{{2,}}/).map(p => p.trim()).filter(Boolean)
       .map(p => '<p>' + escapeHTML(p) + '</p>').join('\\n');
+  }}
+
+  // For summary mode: a TL;DR line (starts with **TL;DR:**) + a bullet
+  // list (lines starting with -, *, or •). Anything else becomes <p>.
+  function renderSummary(text) {{
+    const lines = text.split('\\n').map(l => l.trim());
+    const out = [];
+    let bullets = [];
+    const flush = () => {{
+      if (!bullets.length) return;
+      out.push('<ul>' + bullets.map(b =>
+        '<li>' + renderInline(b) + '</li>').join('') + '</ul>');
+      bullets = [];
+    }};
+    for (const line of lines) {{
+      if (!line) {{ flush(); continue; }}
+      const tldrMatch = line.match(/^\\*\\*TL;DR:?\\*\\*\\s*(.*)$/i);
+      const bulletMatch = line.match(/^[-*•]\\s+(.+)$/);
+      if (tldrMatch) {{
+        flush();
+        out.push('<div class="tldr"><span class="tldr-label">TL;DR</span>'
+          + renderInline(tldrMatch[1]) + '</div>');
+      }} else if (bulletMatch) {{
+        bullets.push(bulletMatch[1]);
+      }} else {{
+        flush();
+        out.push('<p>' + renderInline(line) + '</p>');
+      }}
+    }}
+    flush();
+    return out.join('\\n') || '<p>' + escapeHTML(text) + '</p>';
   }}
 
   function showAIError(msg) {{
@@ -652,9 +710,14 @@ _TEMPLATE = """<!doctype html>
     aiError.style.display = 'none';
     aiBtn.disabled = true;
     const origLabel = aiBtn.textContent;
-    const verb = mode === 'translate'
-      ? 'Translating to ' + (TARGET_LABELS[target] || target) + '…'
-      : 'Refining…';
+    let verb;
+    if (mode === 'translate') {{
+      verb = 'Translating to ' + (TARGET_LABELS[target] || target) + '…';
+    }} else if (mode === 'summarize') {{
+      verb = 'Summarising…';
+    }} else {{
+      verb = 'Refining…';
+    }}
     aiBtn.textContent = verb + ' (this can take a minute)';
     try {{
       const resp = await fetch('/api/refine', {{
@@ -669,15 +732,22 @@ _TEMPLATE = """<!doctype html>
       if (!resp.ok || data.error) throw new Error(data.error || ('HTTP ' + resp.status));
 
       aiOutputText = data.refined || '';
-      aiOutputHTML = renderParagraphs(aiOutputText);
+      aiOutputHTML = (mode === 'summarize')
+        ? renderSummary(aiOutputText)
+        : renderParagraphs(aiOutputText);
       paraView.innerHTML = aiOutputHTML;
 
       const aiBtnWrap = aiBtn.closest('.ai-menu-wrap');
       if (aiBtnWrap) aiBtnWrap.style.display = 'none';
 
-      const outLabel = mode === 'translate'
-        ? (TARGET_LABELS[target] || target.toUpperCase())
-        : 'AI Refined';
+      let outLabel;
+      if (mode === 'translate') {{
+        outLabel = TARGET_LABELS[target] || target.toUpperCase();
+      }} else if (mode === 'summarize') {{
+        outLabel = 'Summary';
+      }} else {{
+        outLabel = 'AI Refined';
+      }}
       const outBtn = aiToggle.querySelector('button[data-view="refined"]');
       outBtn.textContent = outLabel;
 
@@ -686,10 +756,15 @@ _TEMPLATE = """<!doctype html>
         b.classList.toggle('active', b.dataset.view === 'refined')
       );
 
-      const modeTxt = data.mode === 'translate'
-        ? ('translated to ' + (TARGET_LABELS[data.target_language]
-                               || data.target_language || target))
-        : 'refined';
+      let modeTxt;
+      if (data.mode === 'translate') {{
+        modeTxt = 'translated to ' + (TARGET_LABELS[data.target_language]
+          || data.target_language || target);
+      }} else if (data.mode === 'summarize') {{
+        modeTxt = 'summarised';
+      }} else {{
+        modeTxt = 'refined';
+      }}
       aiMeta.textContent = modeTxt + ' via ' + data.provider
         + (data.model ? ' (' + data.model + ')' : '');
       aiMeta.style.display = 'inline';
