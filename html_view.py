@@ -208,6 +208,10 @@ _SHARED_CSS = """
 
   .transcript-col h2 { font-size: 13px; text-transform: uppercase;
     letter-spacing: .1em; color: var(--muted); margin: 0; }
+  .transcript-col h2 .word-count {
+    margin-left: 10px; font-size: 12px; font-weight: 500;
+    color: var(--muted); text-transform: none; letter-spacing: 0;
+    opacity: .85; }
 
   .transcript-head { display: flex; align-items: baseline;
     justify-content: space-between; gap: 16px; margin: 0 0 12px;
@@ -411,7 +415,8 @@ _TEMPLATE = """<!doctype html>
 <main>
   <section class="transcript-col">
     <div class="transcript-head">
-      <h2>Transcript</h2>
+      <h2>Transcript<span class="word-count"
+        title="Total words in this transcript">· {word_count} words</span></h2>
       <span class="video-info">{video_info_html}</span>
     </div>
     <div class="tabs" role="tablist">
@@ -1082,6 +1087,7 @@ def render(
         kind=kind,
         snippet_count=result.snippet_count,
         duration_human=duration_human,
+        word_count=f"{len(result.full_text.split()):,}",
         paragraph_html=_paragraphs_html(result.paragraphs),
         timestamped_html=_timestamped_html(result.raw),
         snippets_json=json.dumps(result.raw, ensure_ascii=False),
