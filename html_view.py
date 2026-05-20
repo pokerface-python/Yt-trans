@@ -320,6 +320,9 @@ _SHARED_CSS = """
     border-color: var(--accent); font-weight: 600; }
   .actions button.primary:hover { opacity: .9; background: var(--accent); }
   .actions button:disabled { opacity: .6; cursor: wait; }
+  .actions button[aria-pressed="true"] {
+    border-color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
   .actions .ai-meta { font-size: 12px; color: var(--muted); margin-left: 4px; }
   .actions .ai-toggle { display: inline-flex; background: var(--panel);
     border: 1px solid var(--border); border-radius: 999px; padding: 3px; }
@@ -415,7 +418,7 @@ _TEMPLATE = """<!doctype html>
 <main>
   <section class="transcript-col">
     <div class="transcript-head">
-      <h2>Transcript<span class="word-count"
+      <h2>Transcript<span class="word-count" id="word-count"
         title="Total words in this transcript">· {word_count} words</span></h2>
       <span class="video-info">{video_info_html}</span>
     </div>
@@ -436,6 +439,10 @@ _TEMPLATE = """<!doctype html>
       <a href="{url}" target="_blank" rel="noopener">Open on YouTube ↗</a>
       <button id="copy-btn">Copy full text</button>
       <a id="download-btn" download="{download_name}">Download .txt</a>
+      <button id="noise-btn" type="button" aria-pressed="false"
+        title="Remove [music] and >> [music] >> markers from the paragraph view">
+        Hide [music]
+      </button>
       <button id="summarize-btn" class="primary" type="button"
         title="Get a TL;DR + bullet-point key notes (powered by AI)">
         Summarize
@@ -935,6 +942,55 @@ _TEMPLATE = """<!doctype html>
       }}
     }});
   }});
+
+  // ----- "Hide [music]" toggle ---------------------------------------------
+  // Pure frontend: strips ONLY the literal `[music]` and `>> [music] >>`
+  // patterns from the paragraph view. Toggle on to clean, off to restore.
+  (function setupNoiseToggle() {{
+    const btn       = document.getElementById('noise-btn');
+    const view      = document.getElementById('paragraph-view');
+    const counter   = document.getElementById('word-count');
+    if (!btn || !view) return;
+    // Snapshot the originals so "off" is always a perfect restore.
+    const originalHTML        = view.innerHTML;
+    const originalCounterText = counter ? counter.textContent : '';
+    // The only two patterns we touch (case-insensitive, whitespace-tolerant).
+    const NOISE_RE = /(?:>>\\s*)?\\[\\s*music\\s*\\](?:\\s*>>)?/gi;
+
+    function hideMusicNoise() {{
+      // Walk each <p>'s textContent — the paragraph view contains no
+      // inline elements, so this is safe and avoids HTML re-parsing risk.
+      const tmp = document.createElement('div');
+      tmp.innerHTML = originalHTML;
+      const out = [];
+      let words = 0;
+      tmp.querySelectorAll('p').forEach(p => {{
+        const cleaned = (p.textContent || '')
+          .replace(NOISE_RE, '')
+          .replace(/\\s+/g, ' ')
+          .trim();
+        if (cleaned) {{
+          out.push('<p>' + escapeHTML(cleaned) + '</p>');
+          words += cleaned.split(/\\s+/).filter(Boolean).length;
+        }}
+      }});
+      view.innerHTML = out.join('\\n') ||
+        '<p><em>(only music markers in this transcript)</em></p>';
+      if (counter) counter.textContent =
+        '· ' + words.toLocaleString() + ' words';
+    }}
+
+    btn.addEventListener('click', () => {{
+      const nowPressed = btn.getAttribute('aria-pressed') !== 'true';
+      btn.setAttribute('aria-pressed', nowPressed ? 'true' : 'false');
+      if (nowPressed) {{
+        hideMusicNoise();
+      }} else {{
+        view.innerHTML = originalHTML;
+        if (counter) counter.textContent = originalCounterText;
+      }}
+    }});
+  }})();
 </script>
 </body>
 </html>
