@@ -861,6 +861,7 @@ _TEMPLATE = """<!doctype html>
         ? renderSummary(aiOutputText)
         : renderParagraphs(aiOutputText);
       paraView.innerHTML = aiOutputHTML;
+      refreshWordCountFromView();
 
       // Hide BOTH primary AI controls — the toggle below takes over.
       const aiBtnWrap = aiBtn.closest('.ai-menu-wrap');
@@ -932,6 +933,7 @@ _TEMPLATE = """<!doctype html>
       btn.classList.add('active');
       const showingAI = btn.dataset.view === 'refined';
       paraView.innerHTML = showingAI ? aiOutputHTML : originalHTML;
+      refreshWordCountFromView();
       document.querySelector('.tabs button[data-target="paragraph-view"]').click();
       // Keep the sticky header pill in lock-step with this toggle.
       if (lastAILabel != null) {{
@@ -942,6 +944,18 @@ _TEMPLATE = """<!doctype html>
       }}
     }});
   }});
+
+  // Recount words from whatever the paragraph view currently shows
+  // (original transcript, AI summary, refined, or translation) and
+  // update the header counter next to "Transcript".
+  function refreshWordCountFromView() {{
+    const counter = document.getElementById('word-count');
+    const view    = document.getElementById('paragraph-view');
+    if (!counter || !view) return;
+    const tokens = (view.textContent || '').match(/\\S+/g);
+    const n = tokens ? tokens.length : 0;
+    counter.textContent = '· ' + n.toLocaleString() + ' words';
+  }}
 
   // ----- "Hide [music]" toggle ---------------------------------------------
   // Pure frontend: strips ONLY the literal `[music]` and `>> [music] >>`
