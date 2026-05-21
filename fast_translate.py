@@ -14,6 +14,7 @@ import logging
 import os
 import re
 import time
+
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -21,12 +22,14 @@ import urllib.request
 log = logging.getLogger("yt-trans.translate")
 
 _GOOGLE_URL = "https://translate.googleapis.com/translate_a/single"
-_MAX_CHUNK_CHARS = 4500
+# Keep chunks modest — long Devanagari in GET query strings breaks translation.
+_MAX_CHUNK_CHARS = 2000
 _USER_AGENT = "yt-trans/1.0"
 _RETRYABLE = (TimeoutError, urllib.error.URLError)
 _PAUSE_BETWEEN_CHUNKS = 0.15
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?।॥])\s+")
+_DEVANAGARI_RE = re.compile(r"[\u0900-\u097F]")
 
 
 class TranslationError(RuntimeError):
@@ -46,32 +49,98 @@ def _google_lang(code: str) -> str:
     return code.split("-", 1)[0]
 
 
-def _request_translate(text: str, source: str, target: str, *, timeout: float) -> str:
-    params = urllib.parse.urlencode(
-        {
-            "client": "gtx",
-            "sl": source,
-            "tl": target,
-            "dt": "t",
-            "q": text,
-        }
-    )
-    url = f"{_GOOGLE_URL}?{params}"
-    req = urllib.request.Request(
-        url,
-        headers={"User-Agent": _USER_AGENT},
-        method="GET",
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as resp:
-        payload = json.loads(resp.read().decode("utf-8"))
+def _devanagari_ratio(text: str) -> float:
+    if not text:
+        return 0.0
+    letters = [c for c in text if c.isalpha() or ("\u0900" <= c <= "\u097F")]
+    if not letters:
+        return 0.0
+    deva = sum(1 for c in letters if _DEVANAGARI_RE.match(c))
+    return deva / len(letters)
 
+
+def detect_source_language(text: str, hinted: str = "") -> str:
+    """Pick a Google ``sl`` code from transcript metadata + script cues."""
+    hinted_norm = _google_lang(hinted)
+    ratio = _devanagari_ratio(text)
+    if ratio >= 0.12:
+        return "hi"
+    if ratio <= 0.02 and len(text) > 40:
+        return "en"
+    if hinted_norm in ("", "auto"):
+        return "auto"
+    return hinted_norm
+
+
+def _needs_translation(text: str, source: str, target: str) -> bool:
+    if source == "auto" or source != target:
+        return True
+    if target == "en" and _devanagari_ratio(text) >= 0.08:
+        return True
+    if target == "hi" and _devanagari_ratio(text) <= 0.02 and len(text) > 40:
+        return True
+    return False
+
+
+def _parse_translate_response(raw: bytes) -> str:
+    payload = json.loads(raw.decode("utf-8"))
     if not payload or not payload[0]:
         raise TranslationError("empty response from translation service")
-
     parts = [seg[0] for seg in payload[0] if seg and seg[0]]
     if not parts:
         raise TranslationError("could not parse translation response")
     return "".join(parts)
+
+
+def _request_translate(text: str, source: str, target: str, *, timeout: float) -> str:
+    params = {
+        "client": "gtx",
+        "sl": source,
+        "tl": target,
+        "dt": "t",
+        "q": text,
+    }
+    body = urllib.parse.urlencode(params).encode("utf-8")
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Content-Type": "application/x-www-form-urlencoded;charset=utf-8",
+    }
+    errors: list[str] = []
+    for method in ("POST", "GET"):
+        try:
+            if method == "POST":
+                req = urllib.request.Request(
+                    _GOOGLE_URL,
+                    data=body,
+                    headers=headers,
+                    method="POST",
+                )
+            else:
+                url = f"{_GOOGLE_URL}?{body.decode()}"
+                req = urllib.request.Request(
+                    url,
+                    headers={"User-Agent": _USER_AGENT},
+                    method="GET",
+                )
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return _parse_translate_response(resp.read())
+        except urllib.error.HTTPError as exc:
+            errors.append(f"{method} HTTP {exc.code}")
+            if method == "POST" and exc.code in (400, 405, 414):
+                continue
+            raise TranslationError(
+                f"translation HTTP {exc.code}: {exc.reason}"
+            ) from exc
+        except (json.JSONDecodeError, TranslationError) as exc:
+            raise TranslationError(f"invalid translation response: {exc}") from exc
+        except _RETRYABLE as exc:
+            errors.append(f"{method} {exc}")
+            if method == "GET":
+                raise
+            continue
+    raise TranslationError(
+        "translation request failed: " + "; ".join(errors) or "unknown"
+    )
 
 
 def _translate_chunk(
@@ -186,8 +255,13 @@ def translate_text(
     if not target or target == "auto":
         raise TranslationError("target_language is required (e.g. 'en' or 'hi')")
 
-    source = _google_lang(source_language)
-    if source == target:
+    source = detect_source_language(text, source_language)
+    if not _needs_translation(text, source, target):
+        log.info(
+            "skip translation — text already looks like %s (hinted %s)",
+            target,
+            source_language,
+        )
         return text
 
     timeout_sec = timeout if timeout is not None else float(

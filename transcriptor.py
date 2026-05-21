@@ -47,7 +47,7 @@ from utils import (
 
 _log = logging.getLogger("yt-trans.transcriptor")
 
-DEFAULT_LANGUAGES: Sequence[str] = ("en", "en-US", "en-GB", "hi")
+DEFAULT_LANGUAGES: Sequence[str] = ("hi", "en", "en-US", "en-GB")
 
 
 def fetch_video_title(video_id: str, *, timeout: float = 3.0) -> Optional[str]:

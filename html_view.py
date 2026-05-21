@@ -659,7 +659,7 @@ _TEMPLATE = """<!doctype html>
       <button id="copy-btn">Copy full text</button>
       <a id="download-btn" download="{download_name}">Download .txt</a>
       <button id="noise-btn" type="button" aria-pressed="false"
-        title="Remove [music] and >> [music] >> markers from the paragraph view">
+        title="Hide [music] / [संगीत] markers; click again to restore the original text">
         Hide [music]
       </button>
       <button id="summarize-btn" class="primary" type="button"
@@ -1080,8 +1080,7 @@ _TEMPLATE = """<!doctype html>
       aiOutputHTML = (mode === 'summarize')
         ? renderSummary(aiOutputText)
         : renderParagraphs(aiOutputText);
-      paraView.innerHTML = aiOutputHTML;
-      refreshWordCountFromView();
+      setNoiseBaseline(aiOutputHTML);
 
       // Hide BOTH primary AI controls — the toggle below takes over.
       const aiBtnWrap = aiBtn.closest('.ai-menu-wrap');
@@ -1152,8 +1151,7 @@ _TEMPLATE = """<!doctype html>
       aiToggle.querySelectorAll('button').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       const showingAI = btn.dataset.view === 'refined';
-      paraView.innerHTML = showingAI ? aiOutputHTML : originalHTML;
-      refreshWordCountFromView();
+      setNoiseBaseline(showingAI ? aiOutputHTML : originalHTML);
       document.querySelector('.tabs button[data-target="paragraph-view"]').click();
       // Keep the sticky header pill in lock-step with this toggle.
       if (lastAILabel != null) {{
@@ -1178,53 +1176,75 @@ _TEMPLATE = """<!doctype html>
   }}
 
   // ----- "Hide [music]" toggle ---------------------------------------------
-  // Pure frontend: strips ONLY the literal `[music]` and `>> [music] >>`
-  // patterns from the paragraph view. Toggle on to clean, off to restore.
-  (function setupNoiseToggle() {{
-    const btn       = document.getElementById('noise-btn');
-    const view      = document.getElementById('paragraph-view');
-    const counter   = document.getElementById('word-count');
-    if (!btn || !view) return;
-    // Snapshot the originals so "off" is always a perfect restore.
-    const originalHTML        = view.innerHTML;
-    const originalCounterText = counter ? counter.textContent : '';
-    // The only two patterns we touch (case-insensitive, whitespace-tolerant).
-    const NOISE_RE = /(?:>>\\s*)?\\[\\s*music\\s*\\](?:\\s*>>)?/gi;
+  // Default view keeps [music] / [संगीत] markers. Turn on to strip them;
+  // turn off to restore the current baseline (original or AI translation).
+  const noiseBtn = document.getElementById('noise-btn');
+  const NOISE_INLINE_RE = /(?:>>\\s*)?\\[\\s*(?:music|संगीत)\\s*\\](?:\\s*>>)?/gi;
+  const NOISE_ONLY_RE = /^\\s*(?:>>\\s*)?(?:\\[\\s*(?:music|संगीत)\\s*\\]|(?:music|संगीत))(?:\\s*>>)?\\s*$/i;
+  let noiseBaselineHTML = paraView.innerHTML;
+  let noiseBaselineCounter = document.getElementById('word-count')?.textContent || '';
 
-    function hideMusicNoise() {{
-      // Walk each <p>'s textContent — the paragraph view contains no
-      // inline elements, so this is safe and avoids HTML re-parsing risk.
-      const tmp = document.createElement('div');
-      tmp.innerHTML = originalHTML;
-      const out = [];
-      let words = 0;
-      tmp.querySelectorAll('p').forEach(p => {{
-        const cleaned = (p.textContent || '')
-          .replace(NOISE_RE, '')
-          .replace(/\\s+/g, ' ')
-          .trim();
-        if (cleaned) {{
-          out.push('<p>' + escapeHTML(cleaned) + '</p>');
-          words += cleaned.split(/\\s+/).filter(Boolean).length;
-        }}
-      }});
-      view.innerHTML = out.join('\\n') ||
-        '<p><em>(only music markers in this transcript)</em></p>';
-      if (counter) counter.textContent =
-        '· ' + words.toLocaleString() + ' words';
-    }}
+  function cleanMusicNoiseText(text) {{
+    const raw = (text || '').trim();
+    if (!raw) return '';
+    if (NOISE_ONLY_RE.test(raw)) return '';
+    return raw.replace(NOISE_INLINE_RE, '').replace(/\\s+/g, ' ').trim();
+  }}
 
-    btn.addEventListener('click', () => {{
-      const nowPressed = btn.getAttribute('aria-pressed') !== 'true';
-      btn.setAttribute('aria-pressed', nowPressed ? 'true' : 'false');
-      if (nowPressed) {{
-        hideMusicNoise();
-      }} else {{
-        view.innerHTML = originalHTML;
-        if (counter) counter.textContent = originalCounterText;
+  function stripMusicNoiseFromHTML(html) {{
+    const tmp = document.createElement('div');
+    tmp.innerHTML = html;
+    const out = [];
+    let words = 0;
+    tmp.querySelectorAll('p, li').forEach(el => {{
+      const cleaned = cleanMusicNoiseText(el.textContent || '');
+      if (cleaned) {{
+        const tag = el.tagName.toLowerCase();
+        out.push('<' + tag + '>' + escapeHTML(cleaned) + '</' + tag + '>');
+        words += cleaned.split(/\\s+/).filter(Boolean).length;
       }}
     }});
-  }})();
+    return {{
+      html: out.join('\\n') ||
+        '<p><em>(only music markers in this transcript)</em></p>',
+      words,
+    }};
+  }}
+
+  function setNoiseBaseline(html) {{
+    noiseBaselineHTML = html;
+    const pressed = noiseBtn && noiseBtn.getAttribute('aria-pressed') === 'true';
+    if (pressed) {{
+      const {{ html: filtered, words }} = stripMusicNoiseFromHTML(html);
+      paraView.innerHTML = filtered;
+      const counter = document.getElementById('word-count');
+      if (counter) counter.textContent = '· ' + words.toLocaleString() + ' words';
+    }} else {{
+      paraView.innerHTML = html;
+      refreshWordCountFromView();
+      const counter = document.getElementById('word-count');
+      if (counter) noiseBaselineCounter = counter.textContent;
+    }}
+  }}
+
+  if (noiseBtn) {{
+    noiseBtn.addEventListener('click', () => {{
+      const hiding = noiseBtn.getAttribute('aria-pressed') !== 'true';
+      noiseBtn.setAttribute('aria-pressed', hiding ? 'true' : 'false');
+      noiseBtn.textContent = hiding ? 'Show [music]' : 'Hide [music]';
+      if (hiding) {{
+        const {{ html, words }} = stripMusicNoiseFromHTML(noiseBaselineHTML);
+        paraView.innerHTML = html;
+        const counter = document.getElementById('word-count');
+        if (counter) counter.textContent = '· ' + words.toLocaleString() + ' words';
+      }} else {{
+        paraView.innerHTML = noiseBaselineHTML;
+        const counter = document.getElementById('word-count');
+        if (counter) counter.textContent = noiseBaselineCounter;
+      }}
+    }});
+  }}
+
 </script>
 </body>
 </html>

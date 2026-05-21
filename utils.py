@@ -67,12 +67,48 @@ def extract_video_id(url_or_id: str) -> str:
     raise ValueError(f"could not parse video id from {url_or_id!r}")
 
 
+_MUSIC_NOISE_INLINE_RE = re.compile(
+    r"(?:>>\s*)?\[\s*(?:music|संगीत|Music|MUSIC)\s*\](?:\s*>>)?",
+    re.IGNORECASE,
+)
+_MUSIC_NOISE_ONLY_RE = re.compile(
+    r"^\s*(?:>>\s*)?"
+    r"(?:\[\s*(?:music|संगीत|Music|MUSIC)\s*\]|(?:music|संगीत))"
+    r"(?:\s*>>)?\s*$",
+    re.IGNORECASE,
+)
+
+
+def strip_music_noise(text: str) -> str:
+    """Remove [music] / [संगीत] markers; drop lines that are only noise."""
+    parts = re.split(r"(\n\n+)", text)
+    out: list[str] = []
+    for part in parts:
+        if re.match(r"\n\n+", part):
+            out.append(part)
+            continue
+        chunk = part.strip()
+        if not chunk:
+            continue
+        if _MUSIC_NOISE_ONLY_RE.match(chunk):
+            continue
+        chunk = _MUSIC_NOISE_INLINE_RE.sub(" ", chunk)
+        chunk = re.sub(r"  +", " ", chunk).strip()
+        if chunk:
+            out.append(chunk)
+    merged = "".join(out).strip()
+    return re.sub(r"\n{3,}", "\n\n", merged)
+
+
 def clean_text(text: str) -> str:
     """Tidy up transcript text for the 'all text' output.
 
     - collapse runs of whitespace (incl. newlines) into single spaces
-    - remove leftover music/sound bracket noise like [Music] when standalone
     - strip leading/trailing whitespace
+
+    Music markers ([music], [संगीत], etc.) are kept here so the viewer
+    can toggle them off with *Hide [music]*; use :func:`strip_music_noise`
+    for that.
     """
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"\s+([,.!?;:])", r"\1", text)

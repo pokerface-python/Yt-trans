@@ -681,9 +681,12 @@ def refine(
 
         if use_fast_translator():
             try:
+                from fast_translate import detect_source_language
+
+                effective_lang = detect_source_language(text, language)
                 output = translate_text(
                     text,
-                    source_language=language,
+                    source_language=effective_lang,
                     target_language=target_language,
                 )
             except TranslationError as exc:
