@@ -15,11 +15,12 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional, Sequence
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from ai_refine import RefinementError, refine
 from export_formats import ExportError, build_doc_html, build_pdf, build_txt
@@ -29,6 +30,29 @@ from transcriptor import DEFAULT_LANGUAGES, TranscriptionError, Transcriptor
 log = logging.getLogger("yt-trans.server")
 
 _MAX_REFINE_BODY = 5 * 1024 * 1024  # 5 MB cap on POST body to /api/refine
+
+
+def _ascii_download_name(filename: str, default: str = "download") -> str:
+    """HTTP ``filename=`` must be latin-1; strip non-ASCII for legacy clients."""
+    name = (filename or default).strip().replace('"', "") or default
+    if "." in name:
+        base, ext = name.rsplit(".", 1)
+        ext = "".join(c for c in ext if c.isascii() and (c.isalnum() or c in "._-"))
+        ext = ext[:12]
+    else:
+        base, ext = name, ""
+    base = base.encode("ascii", "ignore").decode("ascii")
+    base = re.sub(r"[^\w.\- ]+", "_", base).strip("._- ") or default
+    return f"{base}.{ext}" if ext else base
+
+
+def _content_disposition_attachment(filename: str) -> str:
+    """RFC 5987 attachment header safe for Unicode video titles."""
+    name = (filename or "download").strip().replace('"', "") or "download"
+    ascii_name = _ascii_download_name(name)
+    # filename* uses UTF-8 percent-encoding (RFC 5987 / RFC 6266)
+    utf8_name = quote(name, safe="")
+    return f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{utf8_name}"
 
 
 def _build_handler(default_langs: Sequence[str]):
@@ -66,13 +90,12 @@ def _build_handler(default_langs: Sequence[str]):
             filename: str = "download",
             status: int = 200,
         ) -> None:
-            safe_name = filename.replace('"', "")
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
             self.send_header(
                 "Content-Disposition",
-                f'attachment; filename="{safe_name}"',
+                _content_disposition_attachment(filename),
             )
             self.send_header("Cache-Control", "no-store")
             self.end_headers()

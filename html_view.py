@@ -310,6 +310,16 @@ _SHARED_CSS = _SHARED_CSS_HEAD + _build_font_css() + """
 
   .header-tools { display: inline-flex; align-items: center; gap: 10px;
     flex-wrap: wrap; justify-content: flex-end; }
+  .header-tools .header-btn,
+  .header-tools .export-menu-wrap > button { background: var(--panel);
+    border: 1px solid var(--border); color: var(--text);
+    padding: 6px 12px; border-radius: 6px; font: inherit;
+    font-size: 12px; font-weight: 500; cursor: pointer;
+    transition: background .12s ease; white-space: nowrap; }
+  .header-tools .header-btn:hover,
+  .header-tools .export-menu-wrap > button:hover { background: var(--hover); }
+  .header-tools .header-btn:disabled,
+  .header-tools .export-menu-wrap > button:disabled { opacity: .6; cursor: wait; }
   .font-switch { display: inline-flex; align-items: center; gap: 5px;
     flex: 0 0 auto; }
   .font-switch-icon { font-size: 15px; font-weight: 700; color: var(--muted);
@@ -607,6 +617,30 @@ _TEMPLATE = """<!doctype html>
   </div>
   <div class="header-tools">
     {font_switcher_html}
+    <button type="button" class="header-btn" id="copy-btn"
+      title="Copy the visible transcript to the clipboard">
+      Copy text
+    </button>
+    <div class="export-menu-wrap">
+      <button type="button" id="export-btn" aria-haspopup="true"
+        aria-expanded="false" title="Export the transcript currently on screen">
+        Export
+      </button>
+      <div class="export-menu" id="export-menu" hidden role="menu">
+        <button type="button" role="menuitem" data-export="txt">
+          <span class="label">Plain text (.txt)</span>
+          <span class="hint">Download with video title header</span>
+        </button>
+        <button type="button" role="menuitem" data-export="doc">
+          <span class="label">Word (.doc)</span>
+          <span class="hint">Opens in Microsoft Word</span>
+        </button>
+        <button type="button" role="menuitem" data-export="pdf">
+          <span class="label">PDF (.pdf)</span>
+          <span class="hint">Print-ready document</span>
+        </button>
+      </div>
+    </div>
     <div class="theme-switch" role="radiogroup" aria-label="Theme">
       <button type="button" class="theme-swatch" data-theme="auto"      title="Auto"      aria-label="Auto theme"></button>
       <button type="button" class="theme-swatch" data-theme="dark"      title="Dark"      aria-label="Dark theme"></button>
@@ -659,30 +693,6 @@ _TEMPLATE = """<!doctype html>
 
     <div class="actions" id="actions-bar" style="margin-top:24px">
       <a href="{url}" target="_blank" rel="noopener">Open on YouTube ↗</a>
-      <div class="export-menu-wrap">
-        <button type="button" id="export-btn" aria-haspopup="true"
-          aria-expanded="false" title="Export the transcript currently on screen">
-          Export
-        </button>
-        <div class="export-menu" id="export-menu" hidden role="menu">
-          <button type="button" role="menuitem" data-export="copy">
-            <span class="label">Copy to clipboard</span>
-            <span class="hint">Visible transcript only</span>
-          </button>
-          <button type="button" role="menuitem" data-export="txt">
-            <span class="label">Plain text (.txt)</span>
-            <span class="hint">Download with video title header</span>
-          </button>
-          <button type="button" role="menuitem" data-export="doc">
-            <span class="label">Word (.doc)</span>
-            <span class="hint">Opens in Microsoft Word</span>
-          </button>
-          <button type="button" role="menuitem" data-export="pdf">
-            <span class="label">PDF (.pdf)</span>
-            <span class="hint">Print-ready document</span>
-          </button>
-        </div>
-      </div>
       <button id="noise-btn" type="button" aria-pressed="false"
         title="Hide [music] / [संगीत] markers; click again to restore the original text">
         Hide [music]
@@ -990,6 +1000,7 @@ _TEMPLATE = """<!doctype html>
     );
   }}
 
+  const copyBtn = document.getElementById('copy-btn');
   const exportBtn = document.getElementById('export-btn');
   const exportMenu = document.getElementById('export-menu');
 
@@ -1026,7 +1037,7 @@ _TEMPLATE = """<!doctype html>
     if (kind === 'copy') {{
       try {{
         await navigator.clipboard.writeText(text);
-        flashButton(exportBtn, 'Copied!');
+        flashButton(copyBtn, 'Copied!');
       }} catch (e) {{ alert('Copy failed: ' + e); }}
       return;
     }}
@@ -1096,6 +1107,7 @@ _TEMPLATE = """<!doctype html>
     }}
   }}
 
+  copyBtn?.addEventListener('click', () => runExport('copy'));
   exportMenu?.querySelectorAll('button[data-export]').forEach(item => {{
     item.addEventListener('click', () => runExport(item.dataset.export));
   }});

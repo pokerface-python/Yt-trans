@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import logging
 import re
 from pathlib import Path
 
@@ -119,6 +120,10 @@ def build_doc_html(text: str, title: str, video_url: str = "") -> bytes:
 
 def build_pdf(text: str, title: str, video_url: str = "") -> bytes:
     """Render a readable UTF-8 PDF using fpdf2 + Unicode fonts with Indic fallback."""
+    # fpdf2/fontTools log every glyph subset at INFO — quiet for large transcripts.
+    for logger_name in ("fontTools", "fontTools.subset"):
+        logging.getLogger(logger_name).setLevel(logging.WARNING)
+
     try:
         from fpdf import FPDF
     except ImportError as exc:
