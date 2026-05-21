@@ -681,12 +681,12 @@ _TEMPLATE = """<!doctype html>
           <button type="button" role="menuitem"
             data-mode="translate" data-target="en">
             <span class="label">Translate → English</span>
-            <span class="hint">Full translation, keeps meaning &amp; tone</span>
+            <span class="hint">Fast Google Translate · full text</span>
           </button>
           <button type="button" role="menuitem"
             data-mode="translate" data-target="hi">
             <span class="label">Translate → हिन्दी (Hindi)</span>
-            <span class="hint">Full translation in Devanagari script</span>
+            <span class="hint">Fast Google Translate · Devanagari</span>
           </button>
         </div>
       </div>

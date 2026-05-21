@@ -9,8 +9,9 @@ Three modes are supported through the single :func:`refine` entry point:
     * preserve the ORIGINAL language and the speaker's wording
 
 * ``mode="translate"`` — translate the whole transcript into
-  ``target_language`` (``"en"`` and ``"hi"`` are first-class but any
-  language name works) using the same provider.
+  ``target_language`` (``"en"`` and ``"hi"`` are first-class) via fast
+  Google Translate (stdlib, no LLM). Set ``YT_TRANS_TRANSLATE_ENGINE=llm``
+  to use the AI provider instead.
 
 * ``mode="summarize"`` — produce a one-line ``**TL;DR:**`` plus 5–12
   bullet-point key notes in the source language. For long transcripts
@@ -669,6 +670,40 @@ def refine(
             "mode": mode,
             "target_language": target_language,
         }
+
+    if mode == "translate":
+        from fast_translate import (
+            TranslationError,
+            chunk_for_translation,
+            translate_text,
+            use_fast_translator,
+        )
+
+        if use_fast_translator():
+            try:
+                output = translate_text(
+                    text,
+                    source_language=language,
+                    target_language=target_language,
+                )
+            except TranslationError as exc:
+                raise RefinementError(str(exc)) from exc
+            chunks_n = len(chunk_for_translation(text)) or 1
+            log.info(
+                "fast translation complete (%d chunks, %s -> %s)",
+                chunks_n,
+                language,
+                target_language,
+            )
+            return {
+                "refined": output,
+                "provider": "google-translate",
+                "model": "gtx",
+                "chunks": chunks_n,
+                "mode": mode,
+                "target_language": target_language,
+            }
+        log.info("YT_TRANS_TRANSLATE_ENGINE=llm — using AI provider for translate")
 
     provider = provider or get_provider()
 

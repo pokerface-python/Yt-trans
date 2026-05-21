@@ -58,8 +58,8 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
   source language;
   *Summarize (key points)* gives a one-line **TL;DR** plus 5–12 bullet
   key notes (map-reduce for long videos);
-  *Translate → English* and *Translate → Hindi* (हिन्दी) push the whole
-  transcript through the same LLM for a full natural translation.
+  *Translate → English* and *Translate → Hindi* (हिन्दी) use fast Google
+  Translate (seconds, not Ollama). *Refine* and *Summarize* still use the LLM.
   Toggle between *Original* and the AI output with one click.
   Supports Ollama (local, $0), Groq, Google Gemini, and OpenRouter.
 - **Friendly error messages** for `TranscriptsDisabled`,
@@ -286,14 +286,11 @@ response.
 - **preserve the speaker's original words, meaning, and language**
 - *not* summarise, translate, or add commentary
 
-**Translate** asks the model to:
-
-- translate the **full** text into the target language (no
-  summarising, no omissions)
-- use natural, fluent wording — not literal word-for-word
-- add punctuation and break into readable paragraphs
-- preserve the speaker's meaning, tone, and technical terms
-- leave any portion that's already in the target language untouched
+**Translate** uses **fast Google Translate** (stdlib `urllib`, no LLM —
+typically seconds even for long videos). It translates the **full**
+text, keeps paragraph breaks, and supports `en`, `hi`, and other
+common language codes. Set `YT_TRANS_TRANSLATE_ENGINE=llm` if you
+prefer the slower AI translator (Ollama/Groq/etc.) instead.
 
 **Summarize** asks the model to:
 
@@ -310,9 +307,9 @@ response.
   ~4000-word chunk is summarised into bullets, then a final pass
   synthesises those into one coherent TL;DR + bullet list
 
-Long transcripts (in Refine/Translate modes) are split into
-~1200-word chunks so they fit in the context window — chunks are
-processed sequentially, server-side, and stitched back together.
+Long transcripts in **Refine** mode are split into ~1200-word LLM
+chunks. **Translate** splits by character limit for the Google API
+(~4.5k chars per request) and stitches results back together.
 
 ### Programmatic use
 
@@ -344,6 +341,7 @@ translated = refine(
     target_language="en",
 )
 print(translated["refined"])          # full English translation
+print(translated["provider"])         # "google-translate"
 print(translated["mode"])             # "translate"
 print(translated["target_language"])  # "en"
 ```
@@ -465,7 +463,8 @@ Yt-trans/
 ├── transcriptor.py   # Transcriptor class + TranscriptionResult
 ├── html_view.py      # render TranscriptionResult -> standalone HTML page
 ├── server.py         # tiny stdlib HTTP server (--serve web UI + /api/refine)
-├── ai_refine.py      # LLM-backed transcript cleaner (Ollama/Groq/Gemini/OpenRouter)
+├── ai_refine.py      # LLM refine/summarize + translate orchestration
+├── fast_translate.py # fast Google Translate for mode=translate (stdlib urllib)
 ├── utils.py          # URL/id parsing, text cleanup, timestamp formatting
 ├── cli.py            # argparse CLI entry-point (--serve, --open, --format, ...)
 ├── trans_api.py      # minimal usage example
@@ -532,15 +531,21 @@ Either `ollama pull <name>` it, or set `YT_TRANS_OLLAMA_MODEL` to one
 you have (e.g. `export YT_TRANS_OLLAMA_MODEL=mistral`). Run
 `curl -s http://localhost:11434/api/tags` to list what's installed.
 
-**AI Refine/Translate/Summarize takes forever on long videos**
+**AI Refine/Summarize takes forever on long videos**
 LLM inference is sequential per chunk. A 30-minute video chunked into
 ~5 pieces typically takes 30–60 s on Groq/Gemini and 1–3 min on a
 local 3B Ollama model. Use a smaller/faster model
 (`YT_TRANS_OLLAMA_MODEL=llama3.2:3b`) or one of the cloud providers
-for speed. Translation is a touch slower than Refine because the
-model has to generate more tokens; Summarize is the slowest on very
-long videos because it does an extra map-reduce combine pass
-(N chunk-summaries + 1 final synthesis call).
+for speed. Summarize is the slowest on very long videos because it
+does map-reduce (N chunk-summaries + 1 final synthesis call).
+
+**Translate times out or returns HTTP 500**
+By default, **Translate** uses fast Google Translate (not Ollama) and
+should finish in seconds. If you set `YT_TRANS_TRANSLATE_ENGINE=llm`,
+it falls back to the AI path and can hit 5-minute Ollama timeouts on
+long transcripts — unset that variable or set
+`YT_TRANS_TRANSLATE_ENGINE=google`. Translation still needs internet
+access (same as fetching captions).
 
 **Summary output doesn't start with `**TL;DR:**` or skips bullets**
 Some smaller models don't follow the format instructions strictly.
