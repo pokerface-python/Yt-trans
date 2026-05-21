@@ -5,8 +5,8 @@ The page bundles:
       iframe-API enabled so we can drive it from JS) plus a click-to-load
       thumbnail fallback for browsers/extensions that block the embed
       (this is what triggers the "Error 153 / configuration error" message)
-    * a 7-way theme switcher (Auto / Dark / Light / Sepia / Midnight /
-      Solarized / Forest) saved to localStorage
+    * a 10-way theme switcher (Auto / Dark / Light / Sepia / Midnight /
+      Solarized / Forest / Ubuntu / Matrix / Cyber) saved to localStorage
     * a header row showing the video title (or just the id, as a chip,
       when the oEmbed title lookup fails) on the right of "Transcript"
     * the cleaned full-text transcript grouped into paragraphs
@@ -68,6 +68,22 @@ _SHARED_CSS = """
     --muted: #8fb3a0;  --accent: #f5b14b;  --link: #7ddca4;
     --border: #21402f; --hover: #1c3a2a;
   }
+  html[data-theme="ubuntu"] {
+    --bg: #300a24;     --panel: #3d0f30;   --text: #eeeeec;
+    --muted: #b8a0b0;  --accent: #e95420;  --link: #ff7b54;
+    --border: #5c2048; --hover: #451838;
+  }
+  html[data-theme="matrix"] {
+    --bg: #000000;     --panel: #0a120a;   --text: #8fbc8f;
+    --transcript: #39ff14; --muted: #3d6b3d; --accent: #00ff41;
+    --link: #7fff7f; --border: #1a3a1a; --hover: #0d1a0d;
+  }
+  html[data-theme="cyber"] {
+    --bg: #0c0018;     --panel: #150028;   --text: #b8a8d8;
+    --transcript: #ff4fd8; --muted: #6a5890; --accent: #00e8ff;
+    --link: #00e8ff; --border: #3d2060; --hover: #1e0a36;
+  }
+  html { --transcript: var(--text); }
   @media (prefers-color-scheme: light) {
     html[data-theme="auto"] {
       --bg: #f7f8fa;     --panel: #ffffff;   --text: #1b1f27;
@@ -165,6 +181,14 @@ _SHARED_CSS = """
   .theme-swatch[data-theme="solarized"]::after { background: #b58900; }
   .theme-swatch[data-theme="forest"]    { background: #102018; }
   .theme-swatch[data-theme="forest"]::after    { background: #f5b14b; }
+  .theme-swatch[data-theme="ubuntu"]    { background: #300a24; }
+  .theme-swatch[data-theme="ubuntu"]::after    { background: #e95420; }
+  .theme-swatch[data-theme="matrix"]   { background: #000000; }
+  .theme-swatch[data-theme="matrix"]::after   { background: #39ff14;
+    box-shadow: 0 0 5px #39ff14; }
+  .theme-swatch[data-theme="cyber"]    { background: #0c0018; }
+  .theme-swatch[data-theme="cyber"]::after    { background: linear-gradient(
+      135deg, #00e8ff 0 50%, #ff4fd8 50% 100%); }
 
   .url-bar { max-width: 1100px; margin: 0 auto;
     padding: 18px 32px 0; }
@@ -242,6 +266,10 @@ _SHARED_CSS = """
   .view.active { display: block; }
 
   #paragraph-view { font-size: 18px; line-height: 1.85; }
+  #paragraph-view p,
+  #paragraph-view li,
+  #paragraph-view strong,
+  .snippet .t { color: var(--transcript); }
   #paragraph-view p { margin: 0 0 20px; }
   #paragraph-view ul { margin: 0 0 20px; padding-left: 1.25em; font-size: 17px; }
   #paragraph-view li { margin: 0 0 10px; line-height: 1.65; }
@@ -256,7 +284,15 @@ _SHARED_CSS = """
     font-size: 11px; font-weight: 700; letter-spacing: .08em;
     text-transform: uppercase; color: var(--accent);
     margin-right: 10px; vertical-align: 1px; }
-  #paragraph-view strong { color: var(--text); font-weight: 600; }
+  #paragraph-view strong { font-weight: 600; }
+  html[data-theme="matrix"] #paragraph-view,
+  html[data-theme="matrix"] .snippet { font-family: ui-monospace, Menlo,
+    "Cascadia Code", Consolas, monospace; }
+  html[data-theme="cyber"] #paragraph-view p,
+  html[data-theme="cyber"] #paragraph-view li,
+  html[data-theme="cyber"] .snippet .t {
+    text-shadow: 0 0 24px color-mix(in srgb, var(--transcript) 35%, transparent);
+  }
 
   .snippet { display: flex; gap: 14px; align-items: baseline;
     padding: 8px 12px; border-radius: 6px; cursor: pointer;
@@ -397,6 +433,9 @@ _TEMPLATE = """<!doctype html>
     <button type="button" class="theme-swatch" data-theme="midnight"  title="Midnight"  aria-label="Midnight theme"></button>
     <button type="button" class="theme-swatch" data-theme="solarized" title="Solarized" aria-label="Solarized theme"></button>
     <button type="button" class="theme-swatch" data-theme="forest"    title="Forest"    aria-label="Forest theme"></button>
+    <button type="button" class="theme-swatch" data-theme="ubuntu"    title="Ubuntu"    aria-label="Ubuntu terminal theme"></button>
+    <button type="button" class="theme-swatch" data-theme="matrix"    title="Matrix"    aria-label="Matrix terminal theme"></button>
+    <button type="button" class="theme-swatch" data-theme="cyber"     title="Cyber"     aria-label="Cyber neon theme"></button>
   </div>
 </header>
 
@@ -1029,6 +1068,9 @@ _LANDING_TEMPLATE = """<!doctype html>
     <button type="button" class="theme-swatch" data-theme="midnight"  title="Midnight"  aria-label="Midnight theme"></button>
     <button type="button" class="theme-swatch" data-theme="solarized" title="Solarized" aria-label="Solarized theme"></button>
     <button type="button" class="theme-swatch" data-theme="forest"    title="Forest"    aria-label="Forest theme"></button>
+    <button type="button" class="theme-swatch" data-theme="ubuntu"    title="Ubuntu"    aria-label="Ubuntu terminal theme"></button>
+    <button type="button" class="theme-swatch" data-theme="matrix"    title="Matrix"    aria-label="Matrix terminal theme"></button>
+    <button type="button" class="theme-swatch" data-theme="cyber"     title="Cyber"     aria-label="Cyber neon theme"></button>
   </div>
 </header>
 
