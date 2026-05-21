@@ -540,26 +540,29 @@ _SHARED_CSS = _SHARED_CSS_HEAD + _build_font_css() + """
     color: var(--muted); padding: 5px 12px; border-radius: 999px;
     font-size: 12px; font-weight: 500; }
   .actions .ai-toggle button.active { background: var(--accent); color: white; }
-
-  .ai-menu-wrap { position: relative; display: inline-block; }
-  .ai-menu-wrap > button.primary { padding-right: 32px; position: relative; }
-  .ai-menu-wrap > button.primary::after { content: "\\25be";
-    position: absolute; right: 12px; top: 50%; transform: translateY(-50%);
-    font-size: 11px; opacity: .85; }
-  .ai-menu { position: absolute; top: calc(100% + 4px); right: 0;
+  .ai-menu-wrap, .export-menu-wrap { position: relative; display: inline-block; }
+  .ai-menu-wrap > button.primary, .export-menu-wrap > button { padding-right: 32px;
+    position: relative; }
+  .ai-menu-wrap > button.primary::after, .export-menu-wrap > button::after {
+    content: "\\25be"; position: absolute; right: 12px; top: 50%;
+    transform: translateY(-50%); font-size: 11px; opacity: .85; }
+  .ai-menu, .export-menu { position: absolute; top: calc(100% + 4px); right: 0;
     min-width: 200px; padding: 6px;
     background: var(--panel); border: 1px solid var(--border);
     border-radius: 10px; box-shadow: 0 12px 32px rgba(0,0,0,.35);
     z-index: 20; display: flex; flex-direction: column; gap: 2px; }
-  .ai-menu[hidden] { display: none; }
-  .ai-menu button { background: transparent; border: 0; color: var(--text);
-    text-align: left; padding: 9px 12px; border-radius: 6px; cursor: pointer;
-    font: inherit; font-size: 13px; line-height: 1.3;
-    display: flex; flex-direction: column; gap: 2px; }
-  .ai-menu button:hover, .ai-menu button:focus-visible {
+  .ai-menu[hidden], .export-menu[hidden] { display: none; }
+  .ai-menu button, .export-menu button { background: transparent; border: 0;
+    color: var(--text); text-align: left; padding: 9px 12px; border-radius: 6px;
+    cursor: pointer; font: inherit; font-size: 13px; line-height: 1.3;
+    display: flex; flex-direction: column; gap: 2px; width: 100%; }
+  .ai-menu button:hover, .ai-menu button:focus-visible,
+  .export-menu button:hover, .export-menu button:focus-visible {
     background: var(--hover); outline: none; }
-  .ai-menu .label { color: var(--text); font-weight: 500; }
-  .ai-menu .hint { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .ai-menu .label, .export-menu .label { color: var(--text); font-weight: 500; }
+  .ai-menu .hint, .export-menu .hint { color: var(--muted); font-size: 11px;
+    font-weight: 400; }
+
   .ai-error { margin-top: 12px; padding: 12px 14px; border-radius: 8px;
     border: 1px solid var(--accent); background: var(--panel);
     color: var(--text); font-size: 13px; white-space: pre-wrap;
@@ -656,8 +659,30 @@ _TEMPLATE = """<!doctype html>
 
     <div class="actions" id="actions-bar" style="margin-top:24px">
       <a href="{url}" target="_blank" rel="noopener">Open on YouTube ↗</a>
-      <button id="copy-btn">Copy full text</button>
-      <a id="download-btn" download="{download_name}">Download .txt</a>
+      <div class="export-menu-wrap">
+        <button type="button" id="export-btn" aria-haspopup="true"
+          aria-expanded="false" title="Export the transcript currently on screen">
+          Export
+        </button>
+        <div class="export-menu" id="export-menu" hidden role="menu">
+          <button type="button" role="menuitem" data-export="copy">
+            <span class="label">Copy to clipboard</span>
+            <span class="hint">Visible transcript only</span>
+          </button>
+          <button type="button" role="menuitem" data-export="txt">
+            <span class="label">Plain text (.txt)</span>
+            <span class="hint">Download with video title header</span>
+          </button>
+          <button type="button" role="menuitem" data-export="doc">
+            <span class="label">Word (.doc)</span>
+            <span class="hint">Opens in Microsoft Word</span>
+          </button>
+          <button type="button" role="menuitem" data-export="pdf">
+            <span class="label">PDF (.pdf)</span>
+            <span class="hint">Print-ready document</span>
+          </button>
+        </div>
+      </div>
       <button id="noise-btn" type="button" aria-pressed="false"
         title="Hide [music] / [संगीत] markers; click again to restore the original text">
         Hide [music]
@@ -737,6 +762,8 @@ _TEMPLATE = """<!doctype html>
 
 <script>
   const VIDEO_ID = {video_id_json};
+  const PAGE_TITLE = {page_title_json};
+  const VIDEO_TITLE = {video_title_json};
   const SNIPPETS = {snippets_json};
   const FULL_TEXT = {full_text_json};
 
@@ -870,18 +897,208 @@ _TEMPLATE = """<!doctype html>
     }});
   }});
 
-  document.getElementById('copy-btn').addEventListener('click', async () => {{
-    try {{
-      await navigator.clipboard.writeText(FULL_TEXT);
-      const b = document.getElementById('copy-btn');
-      const old = b.textContent;
-      b.textContent = 'Copied!';
-      setTimeout(() => b.textContent = old, 1500);
-    }} catch (e) {{ alert('Copy failed: ' + e); }}
-  }});
+  function escapeHTML(s) {{
+    return s.replace(/[&<>"']/g, c => ({{
+      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+    }}[c]));
+  }}
 
-  const blob = new Blob([FULL_TEXT], {{ type: 'text/plain;charset=utf-8' }});
-  document.getElementById('download-btn').href = URL.createObjectURL(blob);
+  // ----- Export visible transcript (paragraph or timestamped tab) -----------
+  function getVisibleTranscriptText() {{
+    const ts = document.getElementById('timestamped-view');
+    const para = document.getElementById('paragraph-view');
+    if (ts && ts.classList.contains('active')) {{
+      const lines = [];
+      ts.querySelectorAll('.snippet').forEach(sn => {{
+        const time = sn.querySelector('time')?.textContent?.trim() || '';
+        const body = sn.querySelector('.t')?.textContent?.trim() || '';
+        if (body) lines.push(time ? (time + '  ' + body) : body);
+      }});
+      return lines.join('\\n').trim();
+    }}
+    return (para?.innerText || para?.textContent || '').trim();
+  }}
+
+  function getExportTitle() {{
+    return (VIDEO_TITLE || '').trim() || PAGE_TITLE || 'Transcript';
+  }}
+
+  function exportSlug() {{
+    const raw = getExportTitle();
+    const slug = raw.replace(/[\\\\/:*?"<>|]+/g, '-').replace(/\\s+/g, '-')
+      .replace(/-+/g, '-').replace(/^-|-$/g, '').slice(0, 80);
+    return slug || VIDEO_ID;
+  }}
+
+  function exportFilename(ext) {{
+    let suffix = '';
+    const aiToggleEl = document.getElementById('ai-toggle');
+    if (aiToggleEl && aiToggleEl.style.display !== 'none') {{
+      const active = aiToggleEl.querySelector('button.active')?.dataset.view;
+      if (active === 'refined') {{
+        const label = aiToggleEl.querySelector('button[data-view="refined"]')
+          ?.textContent?.trim();
+        if (label && label !== 'AI Output') {{
+          suffix = '-' + label.toLowerCase()
+            .replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '');
+        }} else {{
+          suffix = '-ai';
+        }}
+      }}
+    }}
+    const noiseBtnEl = document.getElementById('noise-btn');
+    if (noiseBtnEl && noiseBtnEl.getAttribute('aria-pressed') === 'true') {{
+      suffix += '-no-music';
+    }}
+    const tab = document.getElementById('timestamped-view')?.classList.contains('active')
+      ? '-timestamped' : '';
+    return exportSlug() + suffix + tab + '.' + ext;
+  }}
+
+  function triggerDownload(blob, filename) {{
+    const a = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    a.href = url;
+    a.download = filename;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  }}
+
+  function flashButton(btn, okText, ms = 1600) {{
+    if (!btn) return;
+    const old = btn.textContent;
+    btn.textContent = okText;
+    btn.disabled = true;
+    setTimeout(() => {{
+      btn.textContent = old;
+      btn.disabled = false;
+    }}, ms);
+  }}
+
+  function buildExportDocument(text) {{
+    const safeTitle = escapeHTML(getExportTitle());
+    const body = escapeHTML(text).replace(/\\n/g, '<br>\\n');
+    return (
+      '<div class="yt-export-doc">' +
+      '<h1>' + safeTitle + '</h1>' +
+      '<p class="yt-export-meta">' +
+      escapeHTML('https://www.youtube.com/watch?v=' + VIDEO_ID) + '</p>' +
+      '<div class="yt-export-body">' + body + '</div></div>'
+    );
+  }}
+
+  const exportBtn = document.getElementById('export-btn');
+  const exportMenu = document.getElementById('export-menu');
+
+  function setExportMenuOpen(open) {{
+    if (!exportMenu || !exportBtn) return;
+    exportMenu.hidden = !open;
+    exportBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }}
+
+  if (exportBtn && exportMenu) {{
+    exportBtn.addEventListener('click', (e) => {{
+      e.stopPropagation();
+      setExportMenuOpen(exportMenu.hidden);
+    }});
+    document.addEventListener('click', (e) => {{
+      if (!exportMenu.contains(e.target) && e.target !== exportBtn) {{
+        setExportMenuOpen(false);
+      }}
+    }});
+    document.addEventListener('keydown', (e) => {{
+      if (e.key === 'Escape') setExportMenuOpen(false);
+    }});
+  }}
+
+  async function runExport(kind) {{
+    setExportMenuOpen(false);
+    const text = getVisibleTranscriptText();
+    if (!text) {{
+      alert('Nothing to export — transcript is empty.');
+      return;
+    }}
+    const title = getExportTitle();
+
+    if (kind === 'copy') {{
+      try {{
+        await navigator.clipboard.writeText(text);
+        flashButton(exportBtn, 'Copied!');
+      }} catch (e) {{ alert('Copy failed: ' + e); }}
+      return;
+    }}
+
+    if (kind === 'txt') {{
+      const header = title + '\\n' + 'https://www.youtube.com/watch?v=' + VIDEO_ID + '\\n\\n';
+      triggerDownload(
+        new Blob([header + text], {{ type: 'text/plain;charset=utf-8' }}),
+        exportFilename('txt')
+      );
+      flashButton(exportBtn, 'Saved');
+      return;
+    }}
+
+    if (kind === 'doc') {{
+      const html = '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+        'xmlns:w="urn:schemas-microsoft-com:office:word">' +
+        '<head><meta charset="utf-8"><title>' + escapeHTML(title) +
+        '</title></head><body>' + buildExportDocument(text) + '</body></html>';
+      triggerDownload(
+        new Blob(['\\ufeff', html], {{ type: 'application/msword;charset=utf-8' }}),
+        exportFilename('doc')
+      );
+      flashButton(exportBtn, 'Saved');
+      return;
+    }}
+
+    if (kind === 'pdf') {{
+      if (window.location.protocol === 'file:') {{
+        alert('PDF export needs the local server. Run: python cli.py --serve');
+        return;
+      }}
+      const old = exportBtn.textContent;
+      exportBtn.textContent = 'Building PDF…';
+      exportBtn.disabled = true;
+      try {{
+        const resp = await fetch('/api/export', {{
+          method: 'POST',
+          headers: {{ 'Content-Type': 'application/json' }},
+          body: JSON.stringify({{
+            text,
+            title,
+            url: 'https://www.youtube.com/watch?v=' + VIDEO_ID,
+            format: 'pdf',
+            filename: exportFilename('pdf'),
+          }}),
+        }});
+        if (!resp.ok) {{
+          let msg = 'HTTP ' + resp.status;
+          try {{
+            const err = await resp.json();
+            if (err.error) msg = err.error;
+          }} catch (_) {{}}
+          throw new Error(msg);
+        }}
+        const blob = await resp.blob();
+        if (!blob.size) throw new Error('server returned an empty PDF');
+        triggerDownload(blob, exportFilename('pdf'));
+        exportBtn.textContent = old;
+        exportBtn.disabled = false;
+        flashButton(exportBtn, 'Saved');
+      }} catch (e) {{
+        exportBtn.textContent = old;
+        exportBtn.disabled = false;
+        alert('PDF export failed: ' + (e.message || e));
+      }}
+    }}
+  }}
+
+  exportMenu?.querySelectorAll('button[data-export]').forEach(item => {{
+    item.addEventListener('click', () => runExport(item.dataset.export));
+  }});
 
   if (window.location.protocol === 'file:') {{
     document.getElementById('offline-notice').style.display = 'block';
@@ -970,12 +1187,6 @@ _TEMPLATE = """<!doctype html>
     summarizeBtn.disabled = true;
     summarizeBtn.title = aiBtn.title;
     summarizeBtn.textContent = 'Summarize (server only)';
-  }}
-
-  function escapeHTML(s) {{
-    return s.replace(/[&<>"']/g, c => ({{
-      '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-    }}[c]));
   }}
 
   // Render Markdown-ish inline: escape, then convert **bold**.
@@ -1393,6 +1604,7 @@ def render(
     kind = "auto-generated" if result.is_generated else "manual"
 
     video_title = getattr(result, "title", None)
+    export_title = video_title or "YouTube video"
 
     return _TEMPLATE.format(
         shared_css=_SHARED_CSS,
@@ -1415,7 +1627,8 @@ def render(
         timestamped_html=_timestamped_html(result.raw),
         snippets_json=json.dumps(result.raw, ensure_ascii=False),
         full_text_json=json.dumps(result.full_text, ensure_ascii=False),
-        download_name=html.escape(f"{result.video_id}.{result.language_code}.txt"),
+        page_title_json=json.dumps(page_title, ensure_ascii=False),
+        video_title_json=json.dumps(export_title, ensure_ascii=False),
         prefilled_url=html.escape(prefilled_url or result.url, quote=True),
         prefilled_langs=html.escape(prefilled_langs, quote=True),
         video_info_html=_video_info_html(

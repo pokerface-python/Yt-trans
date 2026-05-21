@@ -5,16 +5,10 @@ Endpoints:
     GET  /                       -> landing page with a URL input bar
     GET  /?url=<url>&lang=en,hi  -> fetches the transcript and renders
                                     the full interactive HTML view
-    POST /api/refine             -> AI clean-up / translation / summary,
-                                    JSON body:
-        {
-          "text":     "<full transcript>",
-          "language": "en",                         # source BCP-47 (optional)
-          "mode":     "refine"|"translate"|"summarize",
-          "target_language": "en"|"hi"|...          # required if mode=translate
-        }
+    POST /api/refine             -> AI clean-up / translation / summary
+    POST /api/export             -> PDF / TXT / DOC export of visible transcript
 
-No external dependencies — just `http.server` from the standard library.
+Uses stdlib ``http.server`` plus optional ``fpdf2`` for Unicode PDF export.
 """
 
 from __future__ import annotations
@@ -28,6 +22,7 @@ from typing import Optional, Sequence
 from urllib.parse import parse_qs, urlparse
 
 from ai_refine import RefinementError, refine
+from export_formats import ExportError, build_doc_html, build_pdf, build_txt
 from html_view import render, render_landing
 from transcriptor import DEFAULT_LANGUAGES, TranscriptionError, Transcriptor
 
@@ -63,12 +58,27 @@ def _build_handler(default_langs: Sequence[str]):
             self.end_headers()
             self.wfile.write(data)
 
-        def do_POST(self) -> None:  # noqa: N802
-            parsed = urlparse(self.path)
-            if parsed.path != "/api/refine":
-                self.send_error(404, "Not found")
-                return
+        def _send_bytes(
+            self,
+            data: bytes,
+            content_type: str,
+            *,
+            filename: str = "download",
+            status: int = 200,
+        ) -> None:
+            safe_name = filename.replace('"', "")
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header(
+                "Content-Disposition",
+                f'attachment; filename="{safe_name}"',
+            )
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(data)
 
+        def _read_json_body(self) -> dict | None:
             try:
                 length = int(self.headers.get("Content-Length") or "0")
             except ValueError:
@@ -78,15 +88,70 @@ def _build_handler(default_langs: Sequence[str]):
                     {"error": f"body must be 1..{_MAX_REFINE_BODY} bytes"},
                     status=400,
                 )
-                return
-
+                return None
             try:
                 raw = self.rfile.read(length)
-                payload = json.loads(raw.decode("utf-8"))
+                return json.loads(raw.decode("utf-8"))
             except (json.JSONDecodeError, UnicodeDecodeError) as exc:
                 self._send_json(
                     {"error": f"invalid JSON: {exc}"}, status=400
                 )
+                return None
+
+        def _handle_export(self, payload: dict) -> None:
+            fmt = (payload.get("format") or "pdf").strip().lower()
+            text = (payload.get("text") or "").strip()
+            title = (payload.get("title") or "Transcript").strip() or "Transcript"
+            video_url = (payload.get("url") or "").strip()
+
+            if not text:
+                self._send_json({"error": "field 'text' is required"}, status=400)
+                return
+
+            try:
+                if fmt == "pdf":
+                    data = build_pdf(text, title, video_url)
+                    mime = "application/pdf"
+                    ext = "pdf"
+                elif fmt == "txt":
+                    data = build_txt(text, title, video_url)
+                    mime = "text/plain; charset=utf-8"
+                    ext = "txt"
+                elif fmt in ("doc", "word"):
+                    data = build_doc_html(text, title, video_url)
+                    mime = "application/msword; charset=utf-8"
+                    ext = "doc"
+                else:
+                    self._send_json(
+                        {"error": f"unknown format {fmt!r}; use pdf, txt, or doc"},
+                        status=400,
+                    )
+                    return
+            except ExportError as exc:
+                self._send_json({"error": str(exc)}, status=503)
+                return
+            except Exception as exc:  # noqa: BLE001
+                log.exception("export %s failed", fmt)
+                self._send_json(
+                    {"error": f"export failed: {exc}"}, status=500
+                )
+                return
+
+            filename = (payload.get("filename") or f"transcript.{ext}").strip()
+            self._send_bytes(data, mime, filename=filename)
+
+        def do_POST(self) -> None:  # noqa: N802
+            parsed = urlparse(self.path)
+            payload = self._read_json_body()
+            if payload is None:
+                return
+
+            if parsed.path == "/api/export":
+                self._handle_export(payload)
+                return
+
+            if parsed.path != "/api/refine":
+                self.send_error(404, "Not found")
                 return
 
             text = (payload.get("text") or "").strip()
@@ -215,6 +280,28 @@ def serve(
         browser once the server is ready
     """
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
+    try:
+        import fpdf  # noqa: F401
+    except ImportError:
+        print(
+            "warning: fpdf2 is not installed — PDF export will fail. "
+            "Run: python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+        )
+    else:
+        from export_formats import _find_indic_fallback_font, _find_latin_font
+
+        try:
+            _find_latin_font()
+        except ExportError as exc:
+            print(f"warning: PDF Latin font missing — {exc}")
+        else:
+            if _find_indic_fallback_font() is None:
+                print(
+                    "warning: no Devanagari font found — Hindi PDFs may show "
+                    "missing glyphs. Install fonts-noto-core (apt) or "
+                    "fonts-noto-devanagari."
+                )
+
     default_langs = list(languages) if languages else list(DEFAULT_LANGUAGES)
     handler_cls = _build_handler(default_langs)
 
