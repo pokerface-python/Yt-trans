@@ -7,6 +7,9 @@ The page bundles:
       (this is what triggers the "Error 153 / configuration error" message)
     * a 10-way theme switcher (Auto / Dark / Light / Sepia / Midnight /
       Solarized / Forest / Ubuntu / Matrix / Cyber) saved to localStorage
+    * a font-family picker (built-in stacks + modern Google Fonts such as
+      Inter, Poppins, Outfit, Space Grotesk, etc.) for UI + transcript,
+      saved to localStorage (web fonts load when online)
     * a header row showing the video title (or just the id, as a chip,
       when the oEmbed title lookup fails) on the right of "Transcript"
     * the cleaned full-text transcript grouped into paragraphs
@@ -19,9 +22,9 @@ The page bundles:
       via a pill switch; summaries render with a TL;DR callout and a
       themed bullet list.
 
-The output is a single .html file with inlined CSS + JS — no external
-assets, works offline (the embedded YouTube player itself is the only
-network dependency; the AI features need the local server, not file://).
+The output is a single .html file with inlined CSS + JS. Google Fonts
+load when online (built-in stacks still work offline). The embedded
+YouTube player and AI features also need network / the local server.
 """
 
 from __future__ import annotations
@@ -36,7 +39,157 @@ if TYPE_CHECKING:
     from transcriptor import TranscriptionResult
 
 
-_SHARED_CSS = """
+_FB_SANS = '"Noto Sans Devanagari", "Noto Sans", sans-serif'
+_FB_SERIF = '"Noto Serif Devanagari", Georgia, serif'
+_FB_MONO = "ui-monospace, Menlo, Consolas, monospace"
+
+# id, label, optgroup, css font-family stack, Google Fonts family name (or None)
+_FONT_ENTRIES: list[tuple[str, str, str, str, str | None]] = [
+    ("system", "System", "Built-in",
+     f'-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, {_FB_SANS}',
+     None),
+    ("serif", "Georgia Serif", "Built-in",
+     f'Georgia, Cambria, "Times New Roman", Times, {_FB_SERIF}', None),
+    ("mono", "System Mono", "Built-in",
+     f"ui-monospace, SFMono-Regular, Menlo, Consolas, {_FB_MONO}", None),
+    ("friendly", "Verdana", "Built-in",
+     f'Verdana, Tahoma, "Trebuchet MS", {_FB_SANS}', None),
+    ("classic", "Palatino", "Built-in",
+     f'"Palatino Linotype", Palatino, "Book Antiqua", {_FB_SERIF}', None),
+    ("compact", "Arial", "Built-in",
+     f"Arial, Helvetica, {_FB_SANS}", None),
+    ("inter", "Inter", "Modern sans",
+     f'"Inter", {_FB_SANS}', "Inter"),
+    ("dm-sans", "DM Sans", "Modern sans",
+     f'"DM Sans", {_FB_SANS}', "DM Sans"),
+    ("plus-jakarta", "Plus Jakarta Sans", "Modern sans",
+     f'"Plus Jakarta Sans", {_FB_SANS}', "Plus Jakarta Sans"),
+    ("outfit", "Outfit", "Modern sans",
+     f'"Outfit", {_FB_SANS}', "Outfit"),
+    ("manrope", "Manrope", "Modern sans",
+     f'"Manrope", {_FB_SANS}', "Manrope"),
+    ("sora", "Sora", "Modern sans",
+     f'"Sora", {_FB_SANS}', "Sora"),
+    ("space-grotesk", "Space Grotesk", "Modern sans",
+     f'"Space Grotesk", {_FB_SANS}', "Space Grotesk"),
+    ("urbanist", "Urbanist", "Modern sans",
+     f'"Urbanist", {_FB_SANS}', "Urbanist"),
+    ("figtree", "Figtree", "Modern sans",
+     f'"Figtree", {_FB_SANS}', "Figtree"),
+    ("geist", "Geist", "Modern sans",
+     f'"Geist", "Inter", {_FB_SANS}', "Geist"),
+    ("poppins", "Poppins", "Soft & rounded",
+     f'"Poppins", {_FB_SANS}', "Poppins"),
+    ("nunito", "Nunito", "Soft & rounded",
+     f'"Nunito", {_FB_SANS}', "Nunito"),
+    ("rubik", "Rubik", "Soft & rounded",
+     f'"Rubik", {_FB_SANS}', "Rubik"),
+    ("quicksand", "Quicksand", "Soft & rounded",
+     f'"Quicksand", {_FB_SANS}', "Quicksand"),
+    ("comfortaa", "Comfortaa", "Soft & rounded",
+     f'"Comfortaa", {_FB_SANS}', "Comfortaa"),
+    ("lexend", "Lexend", "Soft & rounded",
+     f'"Lexend", {_FB_SANS}', "Lexend"),
+    ("lora", "Lora", "Serif reading",
+     f'"Lora", {_FB_SERIF}', "Lora"),
+    ("merriweather", "Merriweather", "Serif reading",
+     f'"Merriweather", {_FB_SERIF}', "Merriweather"),
+    ("playfair", "Playfair Display", "Serif reading",
+     f'"Playfair Display", {_FB_SERIF}', "Playfair Display"),
+    ("source-serif", "Source Serif 4", "Serif reading",
+     f'"Source Serif 4", {_FB_SERIF}', "Source Serif 4"),
+    ("jetbrains", "JetBrains Mono", "Monospace",
+     f'"JetBrains Mono", {_FB_MONO}', "JetBrains Mono"),
+    ("fira-code", "Fira Code", "Monospace",
+     f'"Fira Code", {_FB_MONO}', "Fira Code"),
+    ("space-mono", "Space Mono", "Monospace",
+     f'"Space Mono", {_FB_MONO}', "Space Mono"),
+    ("ibm-plex-mono", "IBM Plex Mono", "Monospace",
+     f'"IBM Plex Mono", {_FB_MONO}', "IBM Plex Mono"),
+    ("synonym", "Synonym", "Display",
+     f'"Synonym", {_FB_SANS}', "Synonym"),
+    ("archivo", "Archivo", "Display",
+     f'"Archivo", {_FB_SANS}', "Archivo"),
+]
+
+def _build_font_css() -> str:
+    system_stack = next(s for i, _, _, s, _ in _FONT_ENTRIES if i == "system")
+    lines = [
+        "  html {",
+        f"    --font-ui: {system_stack};",
+        "    --font-transcript: var(--font-ui);",
+        "  }",
+    ]
+    for fid, _, _, stack, _ in _FONT_ENTRIES:
+        if fid == "system":
+            continue
+        lines += [
+            f'  html[data-font="{fid}"] {{',
+            f"    --font-ui: {stack};",
+            "    --font-transcript: var(--font-ui);",
+            "  }",
+        ]
+    return "\n".join(lines)
+
+
+def _google_fonts_url() -> str:
+    params: list[str] = []
+    seen: set[str] = set()
+    for _, _, _, _, google in _FONT_ENTRIES:
+        if not google or google in seen:
+            continue
+        seen.add(google)
+        q = google.replace(" ", "+")
+        params.append(f"family={q}:wght@400;500;600;700")
+    return "https://fonts.googleapis.com/css2?" + "&".join(params) + "&display=swap"
+
+
+def _build_font_switcher_html() -> str:
+    groups: list[str] = []
+    current = ""
+    for fid, label, group, _, _ in _FONT_ENTRIES:
+        if group != current:
+            if current:
+                groups.append("</optgroup>")
+            groups.append(f'<optgroup label="{html.escape(group)}">')
+            current = group
+        groups.append(
+            f'<option value="{fid}">{html.escape(label)}</option>'
+        )
+    if current:
+        groups.append("</optgroup>")
+    opts = "\n      ".join(groups)
+    return f"""
+  <label class="font-switch" title="Font">
+    <span class="font-switch-icon" aria-hidden="true">Aa</span>
+    <select id="font-select" aria-label="Font family">
+      {opts}
+    </select>
+  </label>
+"""
+
+
+_GOOGLE_FONTS_URL = _google_fonts_url()
+_FONT_SWITCHER_HTML = _build_font_switcher_html()
+
+_FONT_INIT_JS = """
+  const FONT_KEY = 'yt-trans-font';
+  const fontSelect = document.getElementById('font-select');
+  if (fontSelect) {{
+    const savedFont = localStorage.getItem(FONT_KEY) || 'system';
+    const valid = [...fontSelect.options].some(o => o.value === savedFont);
+    const font = valid ? savedFont : 'system';
+    document.documentElement.setAttribute('data-font', font);
+    fontSelect.value = font;
+    fontSelect.addEventListener('change', () => {{
+      const f = fontSelect.value;
+      document.documentElement.setAttribute('data-font', f);
+      localStorage.setItem(FONT_KEY, f);
+    }});
+  }}
+"""
+
+_SHARED_CSS_HEAD = """
   :root,
   html[data-theme="dark"] {
     --bg: #0f1115;     --panel: #161922;   --text: #e7e9ee;
@@ -84,6 +237,9 @@ _SHARED_CSS = """
     --link: #00e8ff; --border: #3d2060; --hover: #1e0a36;
   }
   html { --transcript: var(--text); }
+"""
+
+_SHARED_CSS = _SHARED_CSS_HEAD + _build_font_css() + """
   @media (prefers-color-scheme: light) {
     html[data-theme="auto"] {
       --bg: #f7f8fa;     --panel: #ffffff;   --text: #1b1f27;
@@ -94,8 +250,7 @@ _SHARED_CSS = """
 
   * { box-sizing: border-box; }
   html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text);
-    font: 16px/1.7 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-      "Helvetica Neue", Arial, "Noto Sans", "Noto Sans Devanagari", sans-serif;
+    font-family: var(--font-ui); font-size: 16px; line-height: 1.7;
     transition: background .2s ease, color .2s ease; }
   a { color: var(--link); text-decoration: none; }
   a:hover { text-decoration: underline; }
@@ -153,6 +308,26 @@ _SHARED_CSS = """
     .ai-status.clickable:hover { transform: none; }
   }
 
+  .header-tools { display: inline-flex; align-items: center; gap: 10px;
+    flex-wrap: wrap; justify-content: flex-end; }
+  .font-switch { display: inline-flex; align-items: center; gap: 5px;
+    flex: 0 0 auto; }
+  .font-switch-icon { font-size: 15px; font-weight: 700; color: var(--muted);
+    line-height: 1; font-family: Georgia, "Times New Roman", serif; }
+  .font-switch select { font: inherit; font-size: 12px; font-weight: 500;
+    padding: 4px 24px 4px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--panel);
+    color: var(--text); cursor: pointer; min-width: 118px; max-width: 168px;
+    appearance: none;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+      linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 55%, calc(100% - 9px) 55%;
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat; }
+  .font-switch select:hover { border-color: var(--accent); }
+  .font-switch select:focus-visible { outline: none;
+    border-color: var(--accent); box-shadow: 0 0 0 2px
+      color-mix(in srgb, var(--accent) 25%, transparent); }
   .theme-switch { display: inline-flex; align-items: center; gap: 6px; }
   .theme-swatch { width: 22px; height: 22px; border-radius: 50%;
     border: 2px solid transparent; cursor: pointer; padding: 0;
@@ -265,7 +440,8 @@ _SHARED_CSS = """
   .view { display: none; }
   .view.active { display: block; }
 
-  #paragraph-view { font-size: 18px; line-height: 1.85; }
+  #paragraph-view { font-size: 18px; line-height: 1.85;
+    font-family: var(--font-transcript); }
   #paragraph-view p,
   #paragraph-view li,
   #paragraph-view strong,
@@ -285,9 +461,6 @@ _SHARED_CSS = """
     text-transform: uppercase; color: var(--accent);
     margin-right: 10px; vertical-align: 1px; }
   #paragraph-view strong { font-weight: 600; }
-  html[data-theme="matrix"] #paragraph-view,
-  html[data-theme="matrix"] .snippet { font-family: ui-monospace, Menlo,
-    "Cascadia Code", Consolas, monospace; }
   html[data-theme="cyber"] #paragraph-view p,
   html[data-theme="cyber"] #paragraph-view li,
   html[data-theme="cyber"] .snippet .t {
@@ -296,7 +469,8 @@ _SHARED_CSS = """
 
   .snippet { display: flex; gap: 14px; align-items: baseline;
     padding: 8px 12px; border-radius: 6px; cursor: pointer;
-    transition: background .12s ease; font-size: 16px; line-height: 1.7; }
+    transition: background .12s ease; font-size: 16px; line-height: 1.7;
+    font-family: var(--font-transcript); }
   .snippet:hover { background: var(--hover); }
   .snippet.active { background: var(--hover);
     box-shadow: inset 3px 0 0 var(--accent); }
@@ -415,6 +589,9 @@ _TEMPLATE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{title} — transcript</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="{google_fonts_url}" rel="stylesheet">
 <style>{shared_css}</style>
 </head>
 <body>
@@ -425,17 +602,20 @@ _TEMPLATE = """<!doctype html>
     <span class="ai-dot" aria-hidden="true"></span>
     <span class="ai-label">Idle</span>
   </div>
-  <div class="theme-switch" role="radiogroup" aria-label="Theme">
-    <button type="button" class="theme-swatch" data-theme="auto"      title="Auto"      aria-label="Auto theme"></button>
-    <button type="button" class="theme-swatch" data-theme="dark"      title="Dark"      aria-label="Dark theme"></button>
-    <button type="button" class="theme-swatch" data-theme="light"     title="Light"     aria-label="Light theme"></button>
-    <button type="button" class="theme-swatch" data-theme="sepia"     title="Sepia"     aria-label="Sepia theme"></button>
-    <button type="button" class="theme-swatch" data-theme="midnight"  title="Midnight"  aria-label="Midnight theme"></button>
-    <button type="button" class="theme-swatch" data-theme="solarized" title="Solarized" aria-label="Solarized theme"></button>
-    <button type="button" class="theme-swatch" data-theme="forest"    title="Forest"    aria-label="Forest theme"></button>
-    <button type="button" class="theme-swatch" data-theme="ubuntu"    title="Ubuntu"    aria-label="Ubuntu terminal theme"></button>
-    <button type="button" class="theme-swatch" data-theme="matrix"    title="Matrix"    aria-label="Matrix terminal theme"></button>
-    <button type="button" class="theme-swatch" data-theme="cyber"     title="Cyber"     aria-label="Cyber neon theme"></button>
+  <div class="header-tools">
+    {font_switcher_html}
+    <div class="theme-switch" role="radiogroup" aria-label="Theme">
+      <button type="button" class="theme-swatch" data-theme="auto"      title="Auto"      aria-label="Auto theme"></button>
+      <button type="button" class="theme-swatch" data-theme="dark"      title="Dark"      aria-label="Dark theme"></button>
+      <button type="button" class="theme-swatch" data-theme="light"     title="Light"     aria-label="Light theme"></button>
+      <button type="button" class="theme-swatch" data-theme="sepia"     title="Sepia"     aria-label="Sepia theme"></button>
+      <button type="button" class="theme-swatch" data-theme="midnight"  title="Midnight"  aria-label="Midnight theme"></button>
+      <button type="button" class="theme-swatch" data-theme="solarized" title="Solarized" aria-label="Solarized theme"></button>
+      <button type="button" class="theme-swatch" data-theme="forest"    title="Forest"    aria-label="Forest theme"></button>
+      <button type="button" class="theme-swatch" data-theme="ubuntu"    title="Ubuntu"    aria-label="Ubuntu terminal theme"></button>
+      <button type="button" class="theme-swatch" data-theme="matrix"    title="Matrix"    aria-label="Matrix terminal theme"></button>
+      <button type="button" class="theme-swatch" data-theme="cyber"     title="Cyber"     aria-label="Cyber neon theme"></button>
+    </div>
   </div>
 </header>
 
@@ -573,6 +753,7 @@ _TEMPLATE = """<!doctype html>
       swatches.forEach(b => b.classList.toggle('active', b === btn));
     }});
   }});
+{font_init_js}
 
   let player = null;
   let playerReady = false;
@@ -1056,21 +1237,27 @@ _LANDING_TEMPLATE = """<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>YT Transcriptor</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="{google_fonts_url}" rel="stylesheet">
 <style>{shared_css}</style>
 </head>
 <body>
 <header>
-  <div class="theme-switch" role="radiogroup" aria-label="Theme">
-    <button type="button" class="theme-swatch" data-theme="auto"      title="Auto"      aria-label="Auto theme"></button>
-    <button type="button" class="theme-swatch" data-theme="dark"      title="Dark"      aria-label="Dark theme"></button>
-    <button type="button" class="theme-swatch" data-theme="light"     title="Light"     aria-label="Light theme"></button>
-    <button type="button" class="theme-swatch" data-theme="sepia"     title="Sepia"     aria-label="Sepia theme"></button>
-    <button type="button" class="theme-swatch" data-theme="midnight"  title="Midnight"  aria-label="Midnight theme"></button>
-    <button type="button" class="theme-swatch" data-theme="solarized" title="Solarized" aria-label="Solarized theme"></button>
-    <button type="button" class="theme-swatch" data-theme="forest"    title="Forest"    aria-label="Forest theme"></button>
-    <button type="button" class="theme-swatch" data-theme="ubuntu"    title="Ubuntu"    aria-label="Ubuntu terminal theme"></button>
-    <button type="button" class="theme-swatch" data-theme="matrix"    title="Matrix"    aria-label="Matrix terminal theme"></button>
-    <button type="button" class="theme-swatch" data-theme="cyber"     title="Cyber"     aria-label="Cyber neon theme"></button>
+  <div class="header-tools">
+    {font_switcher_html}
+    <div class="theme-switch" role="radiogroup" aria-label="Theme">
+      <button type="button" class="theme-swatch" data-theme="auto"      title="Auto"      aria-label="Auto theme"></button>
+      <button type="button" class="theme-swatch" data-theme="dark"      title="Dark"      aria-label="Dark theme"></button>
+      <button type="button" class="theme-swatch" data-theme="light"     title="Light"     aria-label="Light theme"></button>
+      <button type="button" class="theme-swatch" data-theme="sepia"     title="Sepia"     aria-label="Sepia theme"></button>
+      <button type="button" class="theme-swatch" data-theme="midnight"  title="Midnight"  aria-label="Midnight theme"></button>
+      <button type="button" class="theme-swatch" data-theme="solarized" title="Solarized" aria-label="Solarized theme"></button>
+      <button type="button" class="theme-swatch" data-theme="forest"    title="Forest"    aria-label="Forest theme"></button>
+      <button type="button" class="theme-swatch" data-theme="ubuntu"    title="Ubuntu"    aria-label="Ubuntu terminal theme"></button>
+      <button type="button" class="theme-swatch" data-theme="matrix"    title="Matrix"    aria-label="Matrix terminal theme"></button>
+      <button type="button" class="theme-swatch" data-theme="cyber"     title="Cyber"     aria-label="Cyber neon theme"></button>
+    </div>
   </div>
 </header>
 
@@ -1117,6 +1304,7 @@ _LANDING_TEMPLATE = """<!doctype html>
       swatches.forEach(b => b.classList.toggle('active', b === btn));
     }});
   }});
+{font_init_js}
   document.getElementById('url-form').addEventListener('submit', () => {{
     const btn = document.getElementById('submit-btn');
     btn.textContent = 'Fetching…'; btn.disabled = true;
@@ -1188,6 +1376,9 @@ def render(
 
     return _TEMPLATE.format(
         shared_css=_SHARED_CSS,
+        google_fonts_url=_GOOGLE_FONTS_URL,
+        font_switcher_html=_FONT_SWITCHER_HTML,
+        font_init_js=_FONT_INIT_JS,
         lang=html.escape(result.language_code or "en"),
         title=html.escape(page_title),
         url=html.escape(result.url),
@@ -1235,6 +1426,9 @@ def render_landing(
     )
     return _LANDING_TEMPLATE.format(
         shared_css=_SHARED_CSS,
+        google_fonts_url=_GOOGLE_FONTS_URL,
+        font_switcher_html=_FONT_SWITCHER_HTML,
+        font_init_js=_FONT_INIT_JS,
         prefilled_url=html.escape(prefilled_url, quote=True),
         prefilled_langs=html.escape(prefilled_langs, quote=True),
         error_block=error_block,

@@ -48,7 +48,10 @@ so it does **not** need a YouTube API key, OAuth, or a headless browser.
   YouTube player embedded, clickable timestamps that seek the video in
   place, a docking floating mini-player, copy/download buttons, and a
   10-way theme switcher (Auto / Dark / Light / Sepia / Midnight /
-  Solarized / Forest / Ubuntu / Matrix / Cyber) saved to localStorage.
+  Solarized / Forest / Ubuntu / Matrix / Cyber) and a 30+ font picker
+  (built-in stacks plus modern Google Fonts — Inter, Poppins, Outfit,
+  Space Grotesk, Geist, Comfortaa, JetBrains Mono, etc.), both saved to
+  localStorage.
 - **AI Refine, Summarize &amp; Translate** — one split-button next to
   *Copy* / *Download* opens a menu with four actions:
   *Refine (clean up)* fixes punctuation/paragraphing while keeping the
@@ -211,6 +214,11 @@ file with:
 - **10-way theme switcher** in the top right — Auto, Dark, Light, Sepia,
   Midnight, Solarized, Forest, Ubuntu, Matrix, Cyber — your choice is
   remembered in localStorage.
+- **Font picker** (Aa dropdown next to themes) — grouped built-in, modern
+  sans (Inter, DM Sans, Plus Jakarta, Outfit, Space Grotesk, Geist…),
+  soft/rounded (Poppins, Nunito, Comfortaa…), serif, and mono families via
+  Google Fonts when online; applies to transcript + UI, saved in
+  localStorage.
 - **URL input bar** pinned at the top (when served by `--serve`) so you
   can swap to a different video without leaving the page.
 
